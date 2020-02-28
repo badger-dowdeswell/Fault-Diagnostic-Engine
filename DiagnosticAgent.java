@@ -49,16 +49,20 @@ public class DiagnosticAgent extends Performer {
 	// the server used by this team of agents, so it is perhaps higher
 	// up the heirarchy?
 	//
-	NIOserver server = new NIOserver("127.0.0.2", 62500);
+	NIOserver server = new NIOserver("127.0.0.3", 62503);
 
 	Client client = new Client();
 
 	// Setup the application information. <RA_BRD - this will need to come
 	// from higher up the chain of command later...
 	private String homeDirectory = System.getProperty("user.home");
-	private String applicationPath = homeDirectory + "/Development/4diac/Simple2/";
+	//private String applicationPath = homeDirectory + "/Development/4diac/Simple2/";
 	//String applicationPath = homeDirectory + "/Development/4diac/Simple2mon/";
-	private String applicationName = "Simple2";
+	//private String applicationName = "Simple2";
+
+	String applicationPath = homeDirectory + "/Development/4diac/HVAC/";
+	
+	private String applicationName = "HVAC";
 
 	Action diagnose = new Action(DiagnosticTeam.FIND_FAULTS) {
 		public Goal.States execute(
@@ -117,7 +121,8 @@ public class DiagnosticAgent extends Performer {
 					data.setValue("count", (int) count);
 					// Reinitialise the test sequence counter
 					data.setValue("testSequence", 0);
-					skills.rewireApp(server, fbapp);
+					
+				//	skills.rewireApp(server, fbapp);
 					
 					pause("Start FORTE now - press Enter to continue\n");
 					
@@ -145,46 +150,43 @@ public class DiagnosticAgent extends Performer {
 				int testSequence = 0;
 				
 			//	say("Executing identifyFault() from within agent instance " + agentName + " [" + count + "]");				
+			//	if (!clientIsConnected) {
+			//		serverStatus = client.connectToServer("127.0.0.3", 62503);
+			//		if (serverStatus == ExitCodes.EXIT_SUCCESS) {
+			//			clientIsConnected = true;
+			//			System.err.println("Connected to AGENT_RECV client successfully");
+			//		} else {
+			//			System.err.println("Could not connect to AGENT_RECV client...");
+			//		}
+			//	}
 				
-				//pause("Start FORTE now - press Enter to continue\n");
+			//	if (clientIsConnected) {
+			//		// Send a value
+			//		testSequence = (int) data.getValue("testSequence");
+			//		testSequence++;
+			//		data.setValue("testSequence", testSequence);
 				
-				if (!clientIsConnected) {
-					serverStatus = client.connectToServer("127.0.0.1", 62501);
-					if (serverStatus == ExitCodes.EXIT_SUCCESS) {
-						clientIsConnected = true;
-						System.err.println("Configured client successfully");
-					} else {
-						System.err.println("Could not configure client...");
-					}
-				}
+			//		// Simple exit criteria for this goal.
+			//		if (testSequence > 25) {
+			//			return Goal.States.PASSED;	
+			//		}
 				
-				if (clientIsConnected) {
-					// Send a value
-					testSequence = (int) data.getValue("testSequence");
-					testSequence++;
-					data.setValue("testSequence", testSequence);
+			//		testTemperature = (double) testSequence * 0.4;
+			//		System.out.println("Test temperature = " + testTemperature);
 				
-					// Simple exit criteria for this goal.
-					if (testSequence > 25) {
-						return Goal.States.PASSED;	
-					}
-				
-					testTemperature = (double) testSequence * 0.4;
-					System.out.println("Test temperature = " + testTemperature);
-				
-					if (clientIsConnected) {
-						dataPacket = Double.toString(testTemperature);
-						System.err.println("GORITE count = " + count + " - sending value [" + dataPacket + "]");
-						client.sendPacket(dataPacket);
-					}
-				}
+			//		if (clientIsConnected) {
+			//			dataPacket = Double.toString(testTemperature);
+			//			System.err.println("GORITE count = " + count + " - sending value [" + dataPacket + "]");
+			//			client.sendPacket(dataPacket);
+			//		}
+			//	}
 				
 				// Monitor the network. Read the incoming SIFB data queues until they are empty before
 				// releasing this GORITE execute() call.
 				while (server.getQueueSize() > 0) {
 					packet = server.getPacket();
 					// RA_BRD
-					System.err.println("AGENT_SEND_" + packet.SIFBinstanceID() + " [" + packet.dataPacket() + "] [" + server.getQueueSize() + "]");
+					System.err.println("AGENT_GATE_" + packet.SIFBinstanceID() + " [" + packet.dataPacket() + "] [" + server.getQueueSize() + "]");
 				}
 				
 				count++;

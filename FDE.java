@@ -26,13 +26,10 @@
 //
 package fde;
 
-import com.intendico.gorite.*;
-import com.intendico.gorite.addon.*;
-import static fde.Constants.*;
+//import com.intendico.gorite.*;
+//import com.intendico.gorite.addon.*;
+//import static fde.Constants.*;
 	
-//
-// main()
-// ======
 public class FDE {
 	public static String appVersion = "2.0";
 	private static boolean isSilent = false;
@@ -41,7 +38,7 @@ public class FDE {
 	// main()
 	// ======
     public static void main(String[] args) throws Throwable {
-		say("\nFAULT DIAGNOSIS ENGINE version " + appVersion);
+		say("\nFAULT DIAGNOSTIC ENGINE version " + appVersion);
 				
 		// Start building our teams in GORITE
 		say("\nStarting GORITE");

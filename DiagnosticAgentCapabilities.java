@@ -46,20 +46,36 @@ public class DiagnosticAgentCapabilities {
 		triggerInstanceCount = 0;
 		fbAppCodes status = fbAppCodes.UNDEFINED;
 		
-	//	status = createMonitor("T_SENSOR_01", "TEMP", server, fbapp, errorHandler);
-	//	if (status != fbAppCodes.REWIRED) {
-	//		System.out.println("Rewire error " + lastErrorDescription);
-	//	}
+		// Rewiring code for Simple2mon
+		// ============================
+			//	status = createMonitor("T_SENSOR_01", "TEMP", server, fbapp, errorHandler);
+			//	if (status != fbAppCodes.REWIRED) {
+			//		System.out.println("Rewire error " + lastErrorDescription);
+			//	}
+				
+			//	status = createTrigger("F_TO_C_CONV", "IN", server, fbapp, errorHandler); 
+			//	if (status != fbAppCodes.REWIRED) {
+			//		System.out.println("Rewire error " + lastErrorDescription);
+			//	} else {
+			//		status = createMonitor("F_TO_C_CONV", "OUT", server, fbapp, errorHandler);
+			//		if (status != fbAppCodes.REWIRED) {
+			//			System.out.println("Rewire error " + lastErrorDescription);
+			//		}	
+			//	}
+		// ====================================================================================
 		
-		status = createTrigger("F_TO_C_CONV", "IN", server, fbapp, errorHandler); 
+		// Rewiring code for the HVAC
+		// ==========================
+		// Monitor the Z_TEMPERATURE TEMP output.	
+		status = createMonitor("Z_CONTROLLER", "ZONE_TEMP", server, fbapp, errorHandler);
 		if (status != fbAppCodes.REWIRED) {
 			System.out.println("Rewire error " + lastErrorDescription);
-		} else {
-			status = createMonitor("F_TO_C_CONV", "OUT", server, fbapp, errorHandler);
-			if (status != fbAppCodes.REWIRED) {
-				System.out.println("Rewire error " + lastErrorDescription);
-			}	
 		}
+		
+		status = createTrigger("Z_CONTROLLER", "TEMP", server, fbapp, errorHandler); 
+	  	if (status != fbAppCodes.REWIRED) {
+	  		System.out.println("Rewire error " + lastErrorDescription);
+		} 
 		
 		fbapp.displayFunctionBlocks(fbapp);
 		createForteBootfile(fbapp);
@@ -129,7 +145,7 @@ public class DiagnosticAgentCapabilities {
 								
 				if (eventName != "") {
 					// This output can be monitored. Link a new monitor function block into the application.
-					System.out.println("Monitor " + fb.Name() + " " + outputToMonitor + " " + eventName);
+					System.out.println("Monitor " + fb.Name() + " " + outputToMonitor + " " + server.listenerPortNumber() + eventName);
 					System.out.println("");
 					
 					monitorInstanceCount++;
@@ -262,9 +278,10 @@ public class DiagnosticAgentCapabilities {
 					fbtrigger.Type("AGENT_RECV");
 					
 	
-					// Note how the server parameters are retrieved from the current TCP/IP server instance.
-					fbtrigger.addParameter("ADDRESS", "127.0.0.1"); //server.hostName()); 
-					fbtrigger.addParameter("PORT", "62501"); //String.valueOf(server.listenerPortNumber())); 
+					// RA_BRD This needs to come from a pool of server addresses and listener ports
+					//        so we can run multiple AGENT_RECV instances.
+					fbtrigger.addParameter("ADDRESS", "127.0.0.3"); 
+					fbtrigger.addParameter("PORT", "62503"); 
 		
 					// Determine the data type of the input being triggered.
 					fbVar = fb.Var(inputToTrigger);
@@ -357,7 +374,7 @@ public class DiagnosticAgentCapabilities {
 			}
 			
 			// Add the application start command. 
-		//	bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"START\"/>\n");
+			bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"START\"/>\n");
 			bootfile.close();
 		} else {
 			System.err.println("Could not create forte.fboot." + bootfile.errorDescription());
