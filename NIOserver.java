@@ -2,8 +2,10 @@
 // NON-BLOCKING IO NETWORK SERVER
 // ==============================
 // Implements a threaded TCP/IP server that supports multiple, non-blocking
-// connections. This allows the SIFB AGENT_SEND instances to connect
-// to the diagnostic system as clients.
+// connections. This allows the SIFB AGENT_SEND and AGENT_GATE instances to
+// connect to the diagnostic system as clients.
+//
+// This version was customised for use with the Fault Diagnostic Engine.
 //
 // (c) AUT University - 2019-2020
 //
@@ -22,6 +24,7 @@
 // Revision History
 // ================
 // 05.07.2019 BRD Original version.
+// 02.02.2020 BRD Added the ability to post data packets to the client.
 //
 package fde;
 
@@ -47,6 +50,7 @@ public class NIOserver implements Runnable {
 	String hostName = "";
 	int listenerPortNumber = 0;
 	int serverStatus = ExitCodes.UNDEFINED;
+	String replyPacket = "";
 	
 	// FIFO queue for packets
 	// ======================
@@ -100,7 +104,7 @@ public class NIOserver implements Runnable {
 	public int startServer(String hostName, int listenerPortNumber) throws Exception {
 		int serverStatus = ExitCodes.EXIT_SUCCESS;
 		int packetLength = 0;
-
+		
 		if (hostName.equals("")) {
 			serverStatus = ExitCodes.INVALID_HOST_NAME;
 		} else if (listenerPortNumber <= 0) {
@@ -142,8 +146,8 @@ public class NIOserver implements Runnable {
 							SocketChannel sc = serverSocketChannel.accept();
 							// Set this to non-blocking mode.
 							sc.configureBlocking(false);
-							// Set the socket to reading mode.
-							sc.register(selector,  SelectionKey.OP_READ);
+							// Set the socket to read and write mode.
+							sc.register(selector,  SelectionKey.OP_READ | SelectionKey.OP_WRITE);
 							System.err.println("Connection accepted on local address " + sc.getLocalAddress() + "\n");
 						}
 
@@ -166,9 +170,19 @@ public class NIOserver implements Runnable {
 								System.err.println("Connection closed");
 							} else {
 								queuePacket(dataPacket);
+							}	
+						
+							if (key.isReadable()) {
+								// Is there data to send to this client?
+								if (replyPacket.length() > 0) {
+									ByteBuffer byteBuffer2 = ByteBuffer.wrap(replyPacket.getBytes());
+									sc.write(byteBuffer2);
+									byteBuffer2.clear();
+									replyPacket = "";
+								}
 							}
 						}
-					}
+					}	
 				}
 				Thread.currentThread().yield();
 			}
@@ -299,4 +313,11 @@ public class NIOserver implements Runnable {
 	public int listenerPortNumber() {
 		return this.listenerPortNumber;
 	}	
+	
+	//
+	// sendPacket()
+	// ============
+	public void sendPacket(String packetData) {
+		this.replyPacket = packetData;
+	}
 }

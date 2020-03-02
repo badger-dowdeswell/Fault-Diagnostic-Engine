@@ -33,6 +33,8 @@ public class DiagnosticAgent extends Performer {
 	// used to turn off and on console messages during development.
 	private boolean silence = false;
 	private String agentName = "";
+	
+	int packetCount = 0; // RA_BRD temporary
 
 	public static int MAX_COUNT = 50000;
 	private boolean clientIsConnected = false;
@@ -124,7 +126,7 @@ public class DiagnosticAgent extends Performer {
 					
 				//	skills.rewireApp(server, fbapp);
 					
-					pause("Start FORTE now - press Enter to continue\n");
+				//	pause("Start FORTE now - press Enter to continue\n");
 					
 					return Goal.States.PASSED;
 				}
@@ -187,6 +189,11 @@ public class DiagnosticAgent extends Performer {
 					packet = server.getPacket();
 					// RA_BRD
 					System.err.println("AGENT_GATE_" + packet.SIFBinstanceID() + " [" + packet.dataPacket() + "] [" + server.getQueueSize() + "]");
+					packetCount++;
+					if (packetCount > 10) {
+						dataPacket = "hello, agent..\n";
+						server.sendPacket(dataPacket);
+					}
 				}
 				
 				count++;
