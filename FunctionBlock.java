@@ -12,6 +12,7 @@
 // 16.01.2019 BRD Added support for lists of function block instance parameters and connections.
 // 17.01.2019 BRD Needs work to improve sub-List management. See all RA_BRD markers.
 // 06.09.2019 BRD Refactored for use with the new FunctionBlockApp class.
+// 09.06.2020 BRD Adding new belief (skills) that can be instanced for each function block.
 //
 package fde;
 //
@@ -83,14 +84,14 @@ public class FunctionBlock {
 	
 	//
 	// get HasTypeDef()
-	// ==========
+	// ================
 	public boolean HasTypeDef() {
 		return HasTypeDef;
 	}
 
 	//
 	// set HasTypeDef()
-	// ==========
+	// ================
 	public void HasTypeDef(boolean fbHasTypeDef) {
 		this.HasTypeDef = fbHasTypeDef;
 	}
@@ -272,6 +273,19 @@ public class FunctionBlock {
 		fbParameter.Name(name);
 		fbParameter.Value(value);
 		fbParameters.add(fbParameter);			
+	}
+	
+	//
+	// watch()
+	// =======
+	public boolean watch(String thing) {
+		// RA_BRD If the watch has already been setup, return instead of setting up another watch.
+		//        Check that the named "thing" i.e. the port or event name should exist. If not, 
+        //        report an error.
+		
+		
+		
+		return true;
 	}
 }	
 

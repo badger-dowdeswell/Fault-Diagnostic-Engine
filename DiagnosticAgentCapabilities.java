@@ -1,90 +1,449 @@
 //
 // DIAGNOSTIC AGENT CAPABILITIES
 // =============================
-// This class is a repository of domain-specific methods that provide
-// capabilities for an agent. These skills include the ability to rewire
-// an application, create FORTE boot files and other abilities that allow
-// the agent to work with a function block applications.
+// This class is a repository of domain-specific methods that provide skills  
+// or capabilities for an agent. These skills include the ability to rewire
+// an application, create a test harness, create FORTE boot files and other 
+// abilities that allow the agent to work with a function block applications.
 //
-// AUT University - 2019
+// AUT University - 2019-2020
 //
 // Revision History
 // ================
 // 24.10.2019 BRD Original version
+// 14.07.2020 BRD Extended the rewire() functionality to work with diagnostic packages.
+// 21.07.2020 BRD Building createHarness() that inserts the required diagnostic points.
 //
 package fde;
 import static fde.Constants.NOT_FOUND;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
+import java.text.DecimalFormat;
+import java.util.List;
+
 public class DiagnosticAgentCapabilities {
-	int monitorInstanceCount = 0;	// Instance counter for the sender diagnostic function blocks 
-									// added while rewiring the application.
-	int triggerInstanceCount = 0;   // Instance counter for the trigger diagnostic function blocks
-									// added while rewiring the application.
-	String lastErrorDescription;	// Description of the last error that occurred in this class.
+	int monitorInstanceCount = 0;	  // Instance counter for the sender diagnostic function blocks 
+									  // added while rewiring the application.
+	int triggerInstanceCount = 0;     // Instance counter for the trigger diagnostic function blocks
+									  // added while rewiring the application.
+	String lastErrorDescription;	  // Description of the last error that occurred in this class.
+	
+	private ErrorHandler errorHandler = new ErrorHandler();
+	
+	private boolean isSilent = false; // Used to turn off and on console messages during development.
 	
 	//
-	// rewireApp()
-	// ===========
-	// Rewires to function block application to insert diagnostic function blocks.	
+	// createHarness()
+	// ===============
+	// Iterates the function block application loaded previously and searches for 
+	// diagnostic packages for each function block. A set of diagnostic points
+	// are then created that give access to inputs, outputs and events during
+	// runtime. This updates the agents belief structure about the application.
 	//
-	// server	The agent's TCP/IP server that will be used to send and receive network 
-	//          messages.
+	// fbapp            The current belief structure for the function block application.
 	//
-	// fbapp    The list of function blocks and their properties that define this function
-	//	        block application. This is a structure of the type FunctionBlockApp<> which
-	//          contains details of individual function blocks, all their properties and
-	//		    a complete list of connections.	
+	// dps              The list of the diagnostic points for this function block
+	//                  application. 
 	//
-	// returns  One of the fbAppCodes status codes to report if the rewiring was successful.
+	// applicationPath  Diagnostic packages are located in the same folder as the 
+	//                  function block type definition (.fbt) files.
 	//
-	public fbAppCodes rewireApp(NIOserver server, FunctionBlockApp fbapp) {
-		// <RA_BRD Temporary specification of which function blocks to monitor.
-		//         We need to generalise this later...
-		//
-		ErrorHandler errorHandler = new ErrorHandler();
-		monitorInstanceCount = 0;
-		triggerInstanceCount = 0;
-		fbAppCodes status = fbAppCodes.UNDEFINED;
+	// server
+	//
+	public boolean createHarness(FunctionBlockApp fbapp, List<DiagnosticPoint> dps, String applicationPath, NIOserver server) {
+		boolean status = true;
+		boolean foundConnection = false;
 		
-		// Rewiring code for Simple2mon
-		// ============================
-			//	status = createMonitor("T_SENSOR_01", "TEMP", server, fbapp, errorHandler);
-			//	if (status != fbAppCodes.REWIRED) {
-			//		System.out.println("Rewire error " + lastErrorDescription);
-			//	}
+		FunctionBlock fb = new FunctionBlock();
+		FunctionBlockConnection fbconn = new FunctionBlockConnection();
 				
-			//	status = createTrigger("F_TO_C_CONV", "IN", server, fbapp, errorHandler); 
-			//	if (status != fbAppCodes.REWIRED) {
-			//		System.out.println("Rewire error " + lastErrorDescription);
-			//	} else {
-			//		status = createMonitor("F_TO_C_CONV", "OUT", server, fbapp, errorHandler);
-			//		if (status != fbAppCodes.REWIRED) {
-			//			System.out.println("Rewire error " + lastErrorDescription);
-			//		}	
-			//	}
-		// ====================================================================================
-		
-		// Rewiring code for the HVAC
-		// ==========================
-		// Monitor the Z_TEMPERATURE TEMP output.	
-		status = createMonitor("Z_CONTROLLER", "ZONE_TEMP", server, fbapp, errorHandler);
-		if (status != fbAppCodes.REWIRED) {
-			System.out.println("Rewire error " + lastErrorDescription);
+		Diagnostics diag = new Diagnostics();
+		String diagPak = "";
+		int loadStatus = XMLErrorCodes.UNDEFINED;
+		int SIFBinstanceID = 0;
+				
+		errorHandler.clear();
+		if (fbapp.fbCount() == 0) {
+			errorHandler.addDescription("There are no function blocks in that application");
+		} else {
+			// This first pass scans all the function blocks that have a diagnostic package. Note
+			// the validation that is performed to make sure that the information gleaned from
+			// each package is correct. The package may be out-of-date with the function block if
+			// the designer has not kept it in-sync with changes.
+			for (int ptr = 0; ptr < fbapp.fbCount(); ptr++) {
+				fb = fbapp.getfb(ptr);
+				say(fb.Name());
+				 
+				if (fb.Name() != "START") {
+					// Is this function block connected to anything? If not, the
+					// function block is an orphan that cannot do anything. Do not
+					// add diagnostic points.
+					foundConnection = false;
+					for (int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+						fbconn = fbapp.Connection(ptrConnection);
+						//say("--> " + fbconn.DestinationFB() + " " + fbconn.SourceFB());
+						if ( (fbconn.DestinationFB().equals(fb.Name())) || (fbconn.SourceFB().equals(fb.Name())))  {
+							// Yes, the function block is connected to something.
+							diagPak = applicationPath + fb.Type() + ".dpg";
+							loadStatus = diag.loadDiagnostics(diagPak);
+							switch (loadStatus) {
+							case XMLErrorCodes.LOADED:
+								// A diagnostic package for this function block has been found.
+								say("Found diagnostic package for " + fb.Name() + " [" + fb.Type() + "] "+ diagPak);
+								for (int dpptr = 0; dpptr < diag.countDP(); dpptr++) {
+									say("--> " + diag.Name(dpptr));
+									// Create the diagnostic point instance and add it into the list of
+									// diagnostic points.
+									SIFBinstanceID++;
+									DiagnosticPoint dp = new DiagnosticPoint();
+									dp.fbName = fb.Name();
+									dp.fbPortName = diag.Name(dpptr);
+									dp.SIFBinstanceID = SIFBinstanceID;
+									dp.fbapp = fbapp;
+									dp.server = server;							                  
+									dps.add(dp);
+									say("dps size " + dps.size());
+								}
+								break;
+								
+							case XMLErrorCodes.NOT_FOUND:
+								// No diagnostic package was found for this function block; that's fine.
+								break;
+								
+							default:
+								say("Error while loading diagnostic package: " + diag.lastErrorDescription());
+								errorHandler.addDescription(diag.lastErrorDescription());
+								status = false;
+								break;
+							}
+							break;
+						}
+					}
+				}
+			}
+			
+			if ((dps.size() > 0) && (status == true)) {
+				// There is at least one diagnostic point to create. This next pass rewires the application to 
+				// wire-in the individual diagnostic points.
+				DiagnosticPoint dp = new DiagnosticPoint();
+				fbAppCodes dpStatus = fbAppCodes.UNDEFINED;	
+				
+				say("\nRewiring...");
+				for (int dpptr = 0; dpptr < dps.size(); dpptr++) {
+					dp = dps.get(dpptr);
+					dpStatus = createDP(dp, fbapp, server, errorHandler);
+					if (dpStatus != fbAppCodes.REWIRED) {
+						status = false;
+						say("Problem");
+					}
+				}
+				
+				if (status) {
+					if (!createForteBootfile(fbapp, applicationPath + "", errorHandler)) {
+						say("Could not create diagnostic harness. " + errorHandler.Description());
+						status = false;
+					}	
+				}
+			}
 		}
+		return status;
+	}
+	
+	//
+	// createDP()
+	// ==========
+	// Rewires the function block application to add in a new DP function block instance 
+	// and configure its parameters.
+	//
+	// dp               Instance of the diagnostic point that is being created. This contains
+	//                  most of the information about the diagnostic block needed to wire it
+	//                  in.
+	//
+	// fbapp    		The list of function blocks and their properties that define this function
+	//	        		block application. This is a structure of the type FunctionBlockApp<> which
+	//          		contains details of individual function blocks, all their properties and
+	//		    		a complete list of connections.	
+	//
+	// server			The agent's TCP/IP server that will receive network messages from this 
+	//					AGENT_SEND function block.
+	//
+	// errorHandler	    Used to pass errors up through the handler event chain back to the function
+	//					caller.
+	//
+	// returns 		 	One of the FunctionBlockAppCodes to indicate the status of the rewiring
+	//         			command.	
+	//
+	private fbAppCodes createDP(DiagnosticPoint dp, FunctionBlockApp fbapp, NIOserver server, ErrorHandler errorHandler) {
+		fbAppCodes status = fbAppCodes.UNDEFINED;
+		String eventName = "";
+		int ptrWith = 0;
+		int ptrVar = 0;
+		String inputPort = "";
+		String outputPort = "";
+		int dataType = DataTypes.DATA_INT;
+		FBTypeDef fbTypeDef = new FBTypeDef();
 		
-		status = createTrigger("Z_CONTROLLER", "TEMP", server, fbapp, errorHandler); 
-	  	if (status != fbAppCodes.REWIRED) {
-	  		System.out.println("Rewire error " + lastErrorDescription);
-		} 
+		String sourceFB = "";
+		String sourceName = "";
+		String sourceEvent = "";
+		String destinationFB = "";
+		String destinationName = "";
+		String destinationEvent = "";
 		
-		fbapp.displayFunctionBlocks(fbapp);
-		createForteBootfile(fbapp);
+		FunctionBlock fb = new FunctionBlock();
+		FunctionBlock fbdp = new FunctionBlock();
+		FunctionBlockEvent fbEvent = new FunctionBlockEvent();
+		FunctionBlockVariable fbVar = new FunctionBlockVariable();
+		FunctionBlockConnection fbconn = new FunctionBlockConnection();
+		
+		say("Creating diagnostic point " + "DP_"+ dp.SIFBinstanceID() + " " + dp.fbName() + " " + dp.fbPortName());
+		
+		fb = fbapp.findfb(dp.fbName());
+		if (fb.Name() != "") {
+			// Locate the input or output data port
+			ptrVar = fb.findVar(dp.fbPortName);
+			if (ptrVar != NOT_FOUND) {
+				fbVar = fb.Var(ptrVar);
+				switch (fbVar.VarType) {
+				case VAR_INPUT:
+					// Locate the event that is used to trigger this data input.
+					ptrWith = NOT_FOUND;
+					for (int ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
+						fbEvent = fb.Event(ptrEvent);
+						// Only input data types and events can be triggered.
+						if (fbEvent.EventType == EventTypes.EVENT_INPUT) {
+							ptrWith = fbEvent.findWithVar(dp.fbPortName());
+							if (ptrWith != NOT_FOUND) {
+								eventName = fbEvent.EventName;
+								break;
+							}	
+						}
+					}
+					if (ptrWith != NOT_FOUND) {
+						say("Input port " + dp.fbPortName + " " + eventName);
+						
+						fbdp.Name("DP_" + dp.SIFBinstanceID());
+						fbdp.Type("DP");
+						fbdp.Comment("Diagnostic point for " + fb.Name());
+						
+						dataType = fbVar.DataType();
+						outputPort = "DATA_OUT_" + fbVar.StringFromDataType(dataType);
+						fbdp.addParameter("DATA_TYPE", String.valueOf(dataType));
+						
+						// RA_BRD The POLL_TIME should be parameterized ... maybe in the diagnostic package?
+						fbdp.addParameter("POLL_TIME", "T#100ms");
+						fbdp.addParameter("ADDRESS", server.hostName()); 
+						fbdp.addParameter("PORT", String.valueOf(server.listenerPortNumber())); 
+						fbdp.addParameter("INST_ID", String.valueOf(dp.SIFBinstanceID()));
+						
+						// The diagnostic point is being inserted into the event and data flow. Break the
+						// previous direct connections and divert them.												
+						for(int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+							fbconn = fbapp.Connection(ptrConnection);
+						//	say(fbconn.SourceFB() + " " + fbconn.SourceName() 
+						//					   + " ---> " + 
+						//					   fbconn.DestinationFB() + " " + fbconn.DestinationName() );
+							if (fbconn.DestinationFB().equals(fb.Name())) {
+								if (fbconn.DestinationName().equals(dp.fbPortName())) {
+								//	say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName());
+									sourceFB = fbconn.SourceFB();
+									sourceName = fbconn.SourceName();
+									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+								} else if (fbconn.DestinationName().equals(eventName)) {
+								//	say("Found event");
+									sourceEvent = fbconn.SourceName();
+									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+								}
+							}
+						}
+						
+						// Add the new connections between the diagnostic point and the function block.
+						fbapp.addConnection(sourceFB, sourceEvent, fbdp.Name(), "DATA_IN", true);
+						fbapp.addConnection(sourceFB, sourceName, fbdp.Name(), "DATA_IN_" + fbVar.StringFromDataType(dataType) , true);
+						
+						fbapp.addConnection("DP_" + dp.SIFBinstanceID(), "DATA_OUT", fb.Name(), eventName, true);
+						fbapp.addConnection("DP_" + dp.SIFBinstanceID(), outputPort, fb.Name(), dp.fbPortName, true);
+						
+						fbapp.addConnection("START", "COLD", "DP_" + dp.SIFBinstanceID(), "START", true);
+						fbapp.addConnection("START", "WARM", "DP_" + dp.SIFBinstanceID(), "START", true);
+
+						fbapp.add(fbdp);
+						status = fbAppCodes.REWIRED;
+					} else {
+						errorHandler.addDescription("Input port " + dp.fbPortName + " on " + dp.fbName() + " has no event assigned to trigger it.");
+						status = fbAppCodes.EVENT_UNDEFINED;
+					}
+					break;
+					
+				case VAR_OUTPUT:
+					// Locate the event that is used to trigger this data output.
+					ptrWith = NOT_FOUND;
+					for (int ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
+						fbEvent = fb.Event(ptrEvent);
+						// Only output data types and events can be triggered.
+						if (fbEvent.EventType == EventTypes.EVENT_OUTPUT) {
+							ptrWith = fbEvent.findWithVar(dp.fbPortName());
+							if (ptrWith != NOT_FOUND) {
+								eventName = fbEvent.EventName;
+								break;
+							}	
+						}
+					}
+					if (ptrWith != NOT_FOUND) {
+						say("Output port " + dp.fbPortName + " " + eventName);
+						fbdp.Name("DP_" + dp.SIFBinstanceID());
+						fbdp.Type("DP");
+						fbdp.Comment("Diagnostic point for " + fb.Name());
+						
+						dataType = fbVar.DataType();
+						inputPort = "DATA_IN_" + fbVar.StringFromDataType(dataType);
+						fbdp.addParameter("DATA_TYPE", String.valueOf(dataType));
+						
+						// RA_BRD The POLL_TIME should be parameterized ... maybe in the diagnostic package?
+						fbdp.addParameter("POLL_TIME", "T#100ms");
+						fbdp.addParameter("ADDRESS", server.hostName()); 
+						fbdp.addParameter("PORT", String.valueOf(server.listenerPortNumber())); 
+						fbdp.addParameter("INST_ID", String.valueOf(dp.SIFBinstanceID()));	
+						
+						// The diagnostic point is being inserted into the event and data flow. Break the
+						// previous direct connections and divert them.												
+						for(int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+							fbconn = fbapp.Connection(ptrConnection);
+							say(fbconn.SourceFB() + " " + fbconn.SourceName()
+							    + " ---> " + 
+								fbconn.DestinationFB() + " " + fbconn.DestinationName());									   
+							
+							// F_TO_C_CONV_1 CNF ---> Z_CONTROLLER TEMP_CHANGED
+							
+							if (fbconn.SourceFB().equals(fb.Name())) {
+								if (fbconn.SourceName().equals(dp.fbPortName())) {
+									say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
+								        + fbconn.DestinationFB() + " " + fbconn.DestinationName());
+									
+									destinationFB = fbconn.DestinationFB();
+									destinationName = fbconn.DestinationName();
+									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+								} else if (fbconn.SourceName().equals(eventName)) {
+									say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
+									        + fbconn.DestinationFB() + " " + fbconn.DestinationName());
+									destinationEvent = fbconn.DestinationName();
+									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+								}
+							}
+						}
+						
+						// Add the new connections between the diagnostic point and the function block.
+						fbapp.addConnection(fbdp.Name(), "DATA_OUT", destinationFB, destinationEvent, true);
+						fbapp.addConnection(fbdp.Name(), "DATA_OUT_" + fbVar.StringFromDataType(dataType), destinationFB, destinationName, true);
+						
+						fbapp.addConnection(fb.Name(), eventName, "DP_" + dp.SIFBinstanceID(), "DATA_IN", true);
+						fbapp.addConnection(fb.Name(), dp.fbPortName, "DP_" + dp.SIFBinstanceID(), "DATA_IN_" + fbVar.StringFromDataType(dataType), true);
+						
+						fbapp.addConnection("START", "COLD", "DP_" + dp.SIFBinstanceID(), "START", true);
+						fbapp.addConnection("START", "WARM", "DP_" + dp.SIFBinstanceID(), "START", true);
+
+						fbapp.add(fbdp);
+						status = fbAppCodes.REWIRED;
+					} else {
+						errorHandler.addDescription("Output port " + dp.fbPortName + " on " + dp.fbName() + " has no event assigned to trigger it.");
+						status = fbAppCodes.EVENT_UNDEFINED;
+					}
+					break;
+				}
+				
+			} else {
+				// RA_BRD this is where we cater for DPs that are  triggering or monitoring events. It is not 
+				// really an invalid port in that case...				
+				status = fbAppCodes.INVALID_PORT_NAME;
+			}
+		} else {
+			status = fbAppCodes.FB_NOT_FOUND;
+		}
+		return status;
+	}
+	
+	// 
+	// createForteBootfile()
+	// =====================
+	// Generates a FORTE-compliant forte.fboot file that will instantiate the function block
+	// application specified by the function block application definition passed in.
+	//
+	// fbapp         The list of function blocks and their properties that define this function
+	//	             block application. This is a structure of the type FunctionBlockApp<> which
+	//               contains details of individual function blocks, all their properties and
+	//		         a complete list of connections.
+	//
+	// bootFilePath  The fully-qualified path to the directory where the forte.boot file is to
+	//               be created.
+	//
+	// errorHandler  The error handling object which accumulates all the errors for the process.
+	//
+	// returns       boolean true if the boot file was created.
+	//
+	public boolean createForteBootfile(FunctionBlockApp fbapp, String bootFilePath, ErrorHandler errorHandler) {
+		boolean status = false;	
+
+		int requestID = 1;
+		
+		FunctionBlock fb = new FunctionBlock();
+//		FunctionBlockEvent fbevent = new FunctionBlockEvent();
+		FunctionBlockParameter fbparameter = new FunctionBlockParameter();
+		FunctionBlockConnection fbconnection = new FunctionBlockConnection();
+		
+		//String FORTE_PATH = System.getProperty("user.home") + "/4diac-ide/forte/src/";
+		
+		FileIOstatus IOstatus = FileIOstatus.UNDEFINED;
+		FileIO bootfile = new FileIO();
+		
+		IOstatus = bootfile.createFile(bootFilePath, "forte.fboot");
+		if (IOstatus == FileIOstatus.FILE_CREATED) {
+			bootfile.write(";<Request ID=\"" + requestID++ + "\" Action=\"CREATE\"><FB Name=\"EMB_RES\" Type=\"EMB_RES\" /></Request>\n");
+			
+			for (int ptr = 0; ptr < fbapp.fbCount(); ptr++) {
+				fb = fbapp.getfb(ptr);
+				
+				if (fb.Name() != "START") {
+					bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"CREATE\">" +
+					      "<FB Name=\"" + fb.Name() + "\" Type=\"" + fb.Type() + "\" /></Request>\n");
+					
+					// Configure the parameters for this function block. 
+					for (int ptrParameter = 0; ptrParameter < fb.ParameterCount(); ptrParameter++) {
+						fbparameter = fb.Parameter(ptrParameter);
+						
+						bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"WRITE\">" +
+								       "<Connection Source=\"" + fbparameter.Value() + "\" " + 
+								       "Destination=\"" + fb.Name() + "." + fbparameter.Name() + "\" /></Request>\n");
+					}
+				}	
+			}	
+			
+			// Create the connections between the function blocks.
+			for (int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+				fbconnection = fbapp.Connection(ptrConnection);
+				if (fbconnection.Enabled()) {
+					bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"CREATE\">" +
+									"<Connection Source=\"" + fbconnection.SourceFB() + "." + fbconnection.SourceName() + "\" " + 
+									"Destination=\"" + fbconnection.DestinationFB() + "." + fbconnection.DestinationName()  + "\"" + "/></Request>\n");
+				}	
+			}
+			
+			// Add the application start command. 
+			bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"START\"/>\n");
+			bootfile.close();
+			status = true;
+			
+		} else {
+			errorHandler.addDescription("Could not create forte.fboot." + bootfile.errorDescription());
+			status = false;
+		}
 		
 		return status;
 	}
 	
 	//
-	// createMonitor()
+	// createMonitor()  RA_BRD deprecated
 	// ===============
 	// Rewires the function block application to add in a new AGENT_SEND TCP/IP monitor function
 	// block and configure its parameters.
@@ -173,19 +532,19 @@ public class DiagnosticAgentCapabilities {
 					
 				} else {
 					status = fbAppCodes.EVENT_UNDEFINED;
-					errorHandler.lastErrorDescription("Cannot monitor " + blockToMonitor + ". Cannot find linked event for output " + outputToMonitor);
+					errorHandler.addDescription("Cannot monitor " + blockToMonitor + ". Cannot find linked event for output " + outputToMonitor);
 				}
 
 			} else {	
 				status = fbAppCodes.FB_NOT_FOUND;
-				errorHandler.lastErrorDescription("Function block '" + blockToMonitor + "' not found in application.");
+				errorHandler.addDescription("Function block '" + blockToMonitor + "' not found in application.");
 			}
 		}
 		return status;
 	}
 	
 	// 
-	// createTrigger()
+	// createTrigger() RA_BRD deprecated
 	// ===============
 	// Rewires the function block application to add in a new AGENT_SEND TCP/IP monitor function
 	// block and configure its parameters.
@@ -303,85 +662,104 @@ public class DiagnosticAgentCapabilities {
 					
 				} else {
 					status = fbAppCodes.EVENT_UNDEFINED;
-					errorHandler.lastErrorDescription("Cannot trigger " + blockToTrigger + ". Cannot find linked event for input " + inputToTrigger);
+					errorHandler.addDescription("Cannot trigger " + blockToTrigger + ". Cannot find linked event for input " + inputToTrigger);
 				}
 
 			} else {	
 				status = fbAppCodes.FB_NOT_FOUND;
-				errorHandler.lastErrorDescription("Function block '" + blockToTrigger + "' not found in application.");
+				errorHandler.addDescription("Function block '" + blockToTrigger + "' not found in application.");
 			}
 		}
 		return status;
+	}	
+	
+	
+	//
+	// runDiagnostic()
+	// ===============
+	// https://examples.javacodegeeks.com/core-java/dynamic-class-loading-example/
+	// https://stackoverflow.com/questions/21544446/how-do-you-dynamically-compile-and-load-external-java-classes
+	//
+	public boolean runDiagnostic(String applicationPath, String diag) {
+		say("Running diagnostic" + applicationPath + diag);
+		
+		JavaClassLoader javaClassLoader = new JavaClassLoader();
+		javaClassLoader.invokeClassMethod(applicationPath + "MyClass.class", "sayHello");
+		
+		return true;
 	}
 	
-	// 
-	// createForteBootfile()
-	// =====================
-	// Generates a FORTE-compliant forte.fboot file that will instantiate the function block
-	// application specified by the function block application definition passed in.
+	//
+	// lastErrorDescription()
+	// ======================
+	public String lastErrorDescription() {
+		return errorHandler.Description();
+	}
+		
+	//
+	// rewireApp()
+	// ===========
+	// Rewires to function block application to insert diagnostic function blocks.	
+	//
+	// server	The agent's TCP/IP server that will be used to send and receive network 
+	//          messages.
 	//
 	// fbapp    The list of function blocks and their properties that define this function
 	//	        block application. This is a structure of the type FunctionBlockApp<> which
 	//          contains details of individual function blocks, all their properties and
-	//		    a complete list of connections.
+	//		    a complete list of connections.	
 	//
-	// returns  One of the FunctionBlockAppCodes to indicate the status of the boot file creation.
+	// returns  One of the fbAppCodes status codes to report if the rewiring was successful.
 	//
-	public fbAppCodes createForteBootfile(FunctionBlockApp fbapp) {
-		fbAppCodes status = fbAppCodes.UNDEFINED;	
-
-		int requestID = 1;
+	public fbAppCodes rewireApp(NIOserver server, FunctionBlockApp fbapp) {
+		// <RA_BRD Temporary specification of which function blocks to monitor.
+		//         We need to generalise this later...
+		//
+		ErrorHandler errorHandler = new ErrorHandler();
+		monitorInstanceCount = 0;
+		triggerInstanceCount = 0;
+		fbAppCodes status = fbAppCodes.UNDEFINED;
 		
-		FunctionBlock fb = new FunctionBlock();
-		FunctionBlockEvent fbevent = new FunctionBlockEvent();
-		FunctionBlockParameter fbparameter = new FunctionBlockParameter();
-		FunctionBlockConnection fbconnection = new FunctionBlockConnection();
-		
-		String FORTE_PATH = System.getProperty("user.home") + "/4diac-ide/forte/src/";
-		FileIOstatus IOstatus = FileIOstatus.UNDEFINED;
-		FileIO bootfile = new FileIO();
-		
-		IOstatus = bootfile.createFile(FORTE_PATH, "forte.fboot");
-		if (IOstatus == FileIOstatus.FILE_CREATED) {
-			bootfile.write(";<Request ID=\"" + requestID++ + "\" Action=\"CREATE\"><FB Name=\"EMB_RES\" Type=\"EMB_RES\" /></Request>\n");
-			
-			for (int ptr = 0; ptr < fbapp.fbCount(); ptr++) {
-				fb = fbapp.getfb(ptr);
+		// Rewiring code for Simple2mon
+		// ============================
+			//	status = createMonitor("T_SENSOR_01", "TEMP", server, fbapp, errorHandler);
+			//	if (status != fbAppCodes.REWIRED) {
+			//		System.out.println("Rewire error " + lastErrorDescription);
+			//	}
 				
-				if (fb.Name() != "START") {
-					bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"CREATE\">" +
-					      "<FB Name=\"" + fb.Name() + "\" Type=\"" + fb.Type() + "\" /></Request>\n");
-					
-					// Configure the parameters for this function block. 
-					for (int ptrParameter = 0; ptrParameter < fb.ParameterCount(); ptrParameter++) {
-						fbparameter = fb.Parameter(ptrParameter);
-						
-						bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"WRITE\">" +
-								       "<Connection Source=\"" + fbparameter.Value() + "\" " + 
-								       "Destination=\"" + fb.Name() + "." + fbparameter.Name() + "\" /></Request>\n");
-					}
-				}	
-			}	
-			
-			// Create the connections between the function blocks.
-			for (int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
-				fbconnection = fbapp.Connection(ptrConnection);
-				if (fbconnection.Enabled()) {
-					bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"CREATE\">" +
-									"<Connection Source=\"" + fbconnection.SourceFB() + "." + fbconnection.SourceName() + "\" " + 
-									"Destination=\"" + fbconnection.DestinationFB() + "." + fbconnection.DestinationName()  + "\"" + "/></Request>\n");
-				}	
-			}
-			
-			// Add the application start command. 
-			bootfile.write("EMB_RES;<Request ID=\"" + requestID++ + "\" Action=\"START\"/>\n");
-			bootfile.close();
-		} else {
-			System.err.println("Could not create forte.fboot." + bootfile.errorDescription());
+			//	status = createTrigger("F_TO_C_CONV", "IN", server, fbapp, errorHandler); 
+			//	if (status != fbAppCodes.REWIRED) {
+			//		System.out.println("Rewire error " + lastErrorDescription);
+			//	} else {
+			//		status = createMonitor("F_TO_C_CONV", "OUT", server, fbapp, errorHandler);
+			//		if (status != fbAppCodes.REWIRED) {
+			//			System.out.println("Rewire error " + lastErrorDescription);
+			//		}	
+			//	}
+		// ====================================================================================
+		
+		// Rewiring code for the HVAC
+		// ==========================
+		// Monitor the Z_TEMPERATURE TEMP output.	
+		status = createMonitor("Z_CONTROLLER", "ZONE_TEMP", server, fbapp, errorHandler);
+		if (status != fbAppCodes.REWIRED) {
+			System.out.println("Rewire error " + lastErrorDescription);
 		}
+		
+		status = createTrigger("Z_CONTROLLER", "TEMP", server, fbapp, errorHandler); 
+	  	if (status != fbAppCodes.REWIRED) {
+	  		System.out.println("Rewire error " + lastErrorDescription);
+		} 
+		
+		fbapp.displayFunctionBlocks(fbapp);
+		//createForteBootfile(fbapp);
 		
 		return status;
 	}
+	
+
+	
+
 	
 	//
 	// LastErrorDescription()
@@ -392,4 +770,58 @@ public class DiagnosticAgentCapabilities {
 	public String LastErrorDescription() {
 		return lastErrorDescription; 
 	}
-}
+	
+	//
+	// say()
+	// =====
+	// Output a console message for use during debugging. This
+	// can be turned off by setting the private variable silence
+	//
+	private void say(String whatToSay){
+		if(!isSilent) {
+			System.out.println(whatToSay);
+		}
+	}
+
+	
+	
+	//
+	// calcDelta()
+	// ===========
+	//
+	public int calcDelta(float expectedValue, float sampledValue, String decimalFormat) {
+		int delta = 0;
+	
+		DecimalFormat df = new DecimalFormat(decimalFormat);
+		df.setRoundingMode(RoundingMode.UP);
+		BigDecimal expected = new BigDecimal(df.format(expectedValue));
+		BigDecimal sampled = new BigDecimal(df.format(sampledValue));
+		
+		delta = expected.compareTo(sampled);
+		//System.out.println("expected = " + expected + " sampled = " + sampled + " delta = " + delta);
+		if (delta != 0) {
+			MathContext mc = new MathContext(decimalFormat.length() - 2);
+			BigDecimal diff = expected.subtract(sampled, mc);
+		//	System.out.println("diff  = " + diff);
+			BigDecimal cmp = new BigDecimal(0.01);
+			delta = (diff.compareTo(cmp));
+			delta = Math.abs(delta);
+		}
+	//	System.out.println(delta);
+		return delta;
+	}
+}		
+		
+	//	if (expected.compareTo(sampled) == 0) {
+	//		// There is no significant difference to the precision specified.
+	//		delta = 0;
+	//	} else {
+	//		if ( Math.abs(val1.compareTo(val2)) <= 0.0001) {
+	//			say("Delta is fine\n");
+	//		} else {
+	//			say("WHOOPS - delta is NOT fine: " + val1.compareTo(val2) 
+	//			    + " " + val1 + " " + val2 + " " + Math.abs(val1.compareTo(val2)) + "\n");
+	//		}	
+	//	}
+		
+

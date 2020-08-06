@@ -89,18 +89,18 @@ public class FunctionBlockApp {
 	//
 	public int load(String applicationPath, String applicationFileName) {
 		int loadStatus = XMLErrorCodes.UNDEFINED;
-		errorHandler.lastErrorDescription("");
+		errorHandler.clear();
 
 		this.applicationPath = applicationPath;
 		this.applicationFileName = applicationFileName;	
 
 		if (applicationPath == "") {
 			loadStatus = XMLErrorCodes.UNDEFINED_FILE_PATH;		
-			errorHandler.lastErrorDescription("Path to the application file has not been specified");			
+			errorHandler.addDescription("Path to the application file has not been specified");			
 
 		} else if (applicationFileName == "") {
 			loadStatus = XMLErrorCodes.UNDEFINED_FILE_NAME;		
-			errorHandler.lastErrorDescription("Application file name has not been specified");
+			errorHandler.addDescription("Application file name has not been specified");
 
 		} else {
 			try {
@@ -121,8 +121,8 @@ public class FunctionBlockApp {
 		        // when it finishes.
 		        parser.parse(fbapp, handler);
 		        
-		        if (errorHandler.lastErrorDescription() != "") {
-		        	System.out.println(errorHandler.lastErrorDescription());
+		        if (errorHandler.Description() != "") {
+		        	System.out.println(errorHandler.Description());
 		        	loadStatus = XMLErrorCodes.UNEXPECTED_ERROR;
 		        } else {
 		        	checkStartFB(fbs, fbc);
@@ -348,7 +348,7 @@ public class FunctionBlockApp {
 			if (fb.HasTypeDef()) {
 				System.out.println("  (loaded)");
 			} else {
-				System.err.println("  (not loaded)");
+				System.out.println("  (not loaded)");
 			}
 			System.out.printf("%16s %s\n",  "Comment  :", fb.Comment());
 			System.out.println();
@@ -528,7 +528,7 @@ class SAXParser extends DefaultHandler {
 					fbs.add(fb);
 				//	System.out.println(fbs.size() + " " + fb.Name() + " " + fb.eventCount());
 				} else {
-					errorHandler.lastErrorDescription("Could not load function block type definition '" + fbName + "'");
+					errorHandler.addDescription("Could not load function block type definition '" + fbName + "'");
 				}
 			}
 			break;
@@ -540,7 +540,7 @@ class SAXParser extends DefaultHandler {
 				ptrfb = findfb(fbName);
 				if (ptrfb == NOT_FOUND) {
 					// Unrecognised function block <RA_BRD Return this sort of error properly.
-					errorHandler.lastErrorDescription("Unrecognised function block " + fbName + " found while processing Parameter " + parameterName);
+					errorHandler.addDescription("Unrecognised function block " + fbName + " found while processing Parameter " + parameterName);
 				} else {	
 					ptrParameter = fbs.get(ptrfb).findParameter(parameterName);
 					if (ptrParameter == NOT_FOUND) {
@@ -723,11 +723,11 @@ class FBTypeDef {
 
 		if (applicationPath == "") {
 			loadStatus = XMLErrorCodes.UNDEFINED_FILE_PATH;		
-			errorHandler.addErrorDescription("Path to the function block type definition file has not been specified.");			
+			errorHandler.addDescription("Path to the function block type definition file has not been specified.");			
 	
 		} else if (functionBlockType == "") {
 			loadStatus = XMLErrorCodes.UNDEFINED_FILE_NAME;		
-			errorHandler.addErrorDescription("Function block type name has not been specified.");
+			errorHandler.addDescription("Function block type name has not been specified.");
 		} else {
 			this.applicationPath = applicationPath;
 			this.functionBlockTypeFileName = functionBlockType + ".fbt";
@@ -753,7 +753,7 @@ class FBTypeDef {
 		      
 			} catch (Exception e) {
 				loadStatus = XMLErrorCodes.UNEXPECTED_ERROR;
-				errorHandler.addErrorDescription(e.getMessage());
+				errorHandler.addDescription(e.getMessage());
 			}
 		}	
 		return loadStatus;
@@ -937,34 +937,34 @@ class SAXFBParser extends DefaultHandler {
 // Allows deeply-nested handler to log an error that is able to be
 // passed up to higher-level processes.
 //
-class ErrorHandler {
-	
-	String lastErrorDescription = "";
-	
-	//
-	// addErrorDescription()
-	// =====================
-	//
-	public void addErrorDescription(String errorDescription) {
-		if (lastErrorDescription != "") {
-			lastErrorDescription = lastErrorDescription + "\n" + errorDescription;
-		} else {
-			lastErrorDescription = errorDescription;
-		}
-	}
-	
-	// set lastErrorDescription()
-	// ==========================
-	//
-	public void lastErrorDescription(String errorDescription) {
-		lastErrorDescription = errorDescription;
-	}
-	
-	//
-	// get lastErrorDescription()
-	// ==========================
-	public String lastErrorDescription() {
-		return lastErrorDescription;
-	}
-}
+//class ErrorHandler {
+//	
+//	String lastErrorDescription = "";
+//	
+//	//
+//	// addErrorDescription()
+//	// =====================
+//	//
+//	public void addErrorDescription(String errorDescription) {
+//		if (lastErrorDescription != "") {
+//			lastErrorDescription = lastErrorDescription + "\n" + errorDescription;
+//		} else {
+//			lastErrorDescription = errorDescription;
+//		}
+//	}
+//	
+//	// set lastErrorDescription()
+//	// ==========================
+//	//
+//	public void lastErrorDescription(String errorDescription) {
+//		lastErrorDescription = errorDescription;
+//	}
+//	
+//	//
+//	// get lastErrorDescription()
+//	// ==========================
+//	public String lastErrorDescription() {
+//		return lastErrorDescription;
+//	}
+//}
 

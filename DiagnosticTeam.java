@@ -16,7 +16,7 @@ import com.intendico.gorite.addon.Perceptor;
 import static fde.Constants.*;
 
 public class DiagnosticTeam extends Team {
-	// used to turn off and on console messages during development.e
+	// used to turn off and on console messages during development.
 	private boolean isSilent = false;
 	public static int MAX_COUNT = 5;
 	public static final String FIND_FAULTS = "FIND_FAULTS";
@@ -39,7 +39,11 @@ public class DiagnosticTeam extends Team {
 		super(teamName);
 		say("Creating diagnostic agents");
 		DiagnosticAgent marvin = new DiagnosticAgent("marvin");
+		new Thread(marvin).start();
 		
+	//	DiagnosticAgent jane = new DiagnosticAgent("jane");
+	//	new Thread(jane).start();
+	
 		setTaskTeam("diagnose faults", new TaskTeam() {{
 			addRole(new Role(DIAGNOSER, new String[] {FIND_FAULTS}));
 		}});
@@ -47,6 +51,8 @@ public class DiagnosticTeam extends Team {
 		addGoal(marvin.identifyFault());
 		addGoal(marvin.diagnoseFault());
 		addGoal(marvin.reportFault());
+		
+	//	addGoal(jane.configureDiagnostics());
 		say("Team created and ready\n");
 	}
 		
@@ -56,7 +62,8 @@ public class DiagnosticTeam extends Team {
 	// Performs a set of goals sequentially to configure the system, find faults,
 	// diagnose them and then report them.
 	//
-	public boolean findFaults() { 	
+	public boolean findFaults() { 
+		boolean goalStatus = false;
 		Data data = new Data();
 		say("findFaults()");
 		data.create("count");
@@ -71,9 +78,12 @@ public class DiagnosticTeam extends Team {
      // in the team's default capability. It is found, as it has been added
      // via an addGoal() invocation in the constructor.
      //
-     performGoal(new BDIGoal(CONFIGURE_DIAGNOSTICS), "CONFIGURE_DIAGNOSTICS", data);
-     performGoal(new BDIGoal(IDENTIFY_FAULT), "IDENTIFY_FAULT", data);
-     performGoal(new BDIGoal(DIAGNOSE_FAULT), "DIAGNOSE_FAULT", data);
+	 goalStatus = performGoal(new BDIGoal(CONFIGURE_DIAGNOSTICS), "CONFIGURE_DIAGNOSTICS", data);
+     if (goalStatus) {
+    	 // The configuration worked, so start monitoring and perhaps diagnosis.
+    	 performGoal(new BDIGoal(IDENTIFY_FAULT), "IDENTIFY_FAULT", data);
+    	 performGoal(new BDIGoal(DIAGNOSE_FAULT), "DIAGNOSE_FAULT", data);
+     }	 
      performGoal(new BDIGoal(REPORT_FAULT), "REPORT_FAULT", data);
      return true;
 	}
@@ -82,7 +92,7 @@ public class DiagnosticTeam extends Team {
 	// say()
 	// =====
 	// Output a console message for use during debugging. This
-	// can be turned off by setting the private variable silence
+	// can be turned off by setting the private variable isSilent.
 	//
 	private void say(String whatToSay){
 		if(!isSilent) {

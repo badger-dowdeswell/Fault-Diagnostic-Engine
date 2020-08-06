@@ -26,12 +26,8 @@
 //
 package fde;
 
-//import com.intendico.gorite.*;
-//import com.intendico.gorite.addon.*;
-//import static fde.Constants.*;
-	
 public class FDE {
-	public static String appVersion = "2.0";
+	public static String appVersion = "2.1";
 	private static boolean isSilent = false;
 
 	//
@@ -48,6 +44,7 @@ public class FDE {
 		// for and diagnosing faults.
 		diagnosticTeam.findFaults();
 		say("Exiting Fault Diagnostic Engine\n");
+		System.exit(0); 
 	}
 			
 	//
@@ -58,7 +55,7 @@ public class FDE {
 	//
 	private static void say(String whatToSay){
 		if(!isSilent) {
-			System.err.println(whatToSay);
+			System.out.println(whatToSay);
 		}
 	}	
 }
