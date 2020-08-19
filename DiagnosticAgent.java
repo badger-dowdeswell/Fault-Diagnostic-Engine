@@ -4,10 +4,7 @@
 // Implements the DiagnosticAgent instance that inherits a set of
 // Team goals for finding and diagnosing faults.
 //
-// This is analogous to the Cell class that extends the Team class from Chapter
-// Five of the GORITE book.
-//
-// Barry Dowdeswell - 2017-2020
+// AUT University
 //
 // Revision History
 // ================
@@ -15,6 +12,18 @@
 //                from Dennis Jarvis.
 // 03.07.2019 BRD Moved goal execute() methods into this class to allow multiple agents
 //                to be instanced properly.
+//
+// Documentation
+// =============
+// The diagnostic agent is analogous to the Cell class that extends the Team class from Chapter
+// Five of the GORITE book. The agent extends the GORITE Performer class,
+//
+// The execute() method of a Goal definition is key to an agent's ability to perform a the tasks
+// required to achieve that goal. It is where the real work for a goal gets done. 
+//
+// When GORITE calls this method, it performs steps to try and fulfill the goal and then exits
+// with a Goal state. This is used to determine if the goal has been completed or should be
+// re-tried later. If it needs to be retried, GORITE will make sure it is re-scheduled.
 //
 package fde;
 
@@ -34,12 +43,12 @@ import fde.ExitCodes;
 import static fde.Constants.*;
 
 public class DiagnosticAgent extends Performer implements Runnable {
-	private String TODO_GROUP = "diagnostic agent Job List";
-	// used to turn off and on console messages during development.
+	// Used to turn off and on console messages during development.
 	private boolean isSilent = false;
 	
 	private String agentName = "";
 	
+	// RA_BRD temporary values used during early diagnostic testing runs ..
 	int packetCount = 0; // RA_BRD temporary
 	int cycleCount = 0;
 	int dataValue = 0;
@@ -47,7 +56,7 @@ public class DiagnosticAgent extends Performer implements Runnable {
 	float sampledData = 0;
 	float lastSample = 9999;
 	int outlierCount = 0;
-	
+		
 	String packetValue = "";
 
 	public static int MAX_COUNT = 50000;
@@ -72,29 +81,30 @@ public class DiagnosticAgent extends Performer implements Runnable {
 	
 	DiagnosticAgentCapabilities skills = new DiagnosticAgentCapabilities();
 	FunctionBlockApp fbapp = new FunctionBlockApp();
+	Beliefs beliefs = new Beliefs();
 	
-	List<DiagnosticPoint> dps = new ArrayList<DiagnosticPoint>(); 
+	DiagnosticPoints dps = new DiagnosticPoints();
 	
 	// Create a runnable instance of the server. This will
 	// manage all communications from the function block
 	// application to this agent.
 	//
-	// <RA_BRD how should we define the server configuration? It is 
+	// RA_BRD - how should we define the server configuration? It is 
 	// part of this diagnostic engine instance (and perhaps this is
 	// the server used by this team of agents, so it is perhaps higher
 	// up the hierarchy?
 	//
-	
 	NIOserver server = new NIOserver("127.0.0.3", 62503); 
-
-	// Client client = new Client(); //RA_BRD maybe not needed any more?
+	
+	// RA_BRD temporary instantiation of the dynamic script library.
+	Scripts script = new Scripts();
 
 	// Setup the application information. <RA_BRD - this will need to come
 	// from higher up the chain of command later...
 	private String homeDirectory = System.getProperty("user.home");
 	
+	// RA_BRD - should this information come from the Team?
 	String applicationPath = homeDirectory + "/Development/4diac/HVAC/";
-	
 	private String applicationName = "HVAC";
 
 	Action diagnose = new Action(DiagnosticTeam.FIND_FAULTS) {
@@ -119,7 +129,7 @@ public class DiagnosticAgent extends Performer implements Runnable {
 		
 		new Thread(server).start(); 
 
-		// Create and add team goals to this agent. Create takes as its
+		// Create and add team goals to this agent. The method create() takes as its
 		// arguments the names of the elements in the data context that
 		// are to be used as the inputs and outputs for the goal execution.
 		// Execution will not proceed until all inputs have been assigned values.
@@ -143,35 +153,39 @@ public class DiagnosticAgent extends Performer implements Runnable {
 			//
 			// execute()
 			// =========
-			// This is where the real work for a goal gets done. When GORITE
-			// calls this method, it performs steps to try and fulfill the
-			// goal and then exits with a Goal state. This is used to
-			// determine if the goal has been completed or should be re-tried
-			// later. If it needs to be retried, GORITE will make sure it
-			// is re-scheduled.
-			//
 			public Goal.States execute(Data data) {
-				int count = (int) data.getValue("count");
 				int loadStatus = XMLErrorCodes.UNDEFINED;
-								
+
 				// Load the function block application information.  
+				beliefs.create("AppName", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, applicationName);
+				beliefs.create("AppPath", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, applicationPath);
+				           
 				loadStatus = fbapp.load(applicationPath, applicationName + ".sys");
+				
 				if (loadStatus != XMLErrorCodes.LOADED) {
-					// RA_BRD This could be stored in a belief...
 					say("Function block application " + applicationName + ".sys could not be loaded.\n" + fbapp.lastErrorDescription);
-					count++;
-					data.setValue("count", (int) count);
+					beliefs.create("LoadStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.FALSE, 
+						           "Function block application " + applicationName + ".sys could not be loaded.\n" + fbapp.lastErrorDescription);
 					return Goal.States.FAILED;
+					
 				} else {
-					count = 0;
-			
+					beliefs.create("LoadStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, "Application loaded successfully.");
+					
+					// Create and deploy the diagnostic test harness.
 					if (skills.createHarness(fbapp, dps, applicationPath, server)) {
+						beliefs.create("DeployedStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, "Application deployed successfully.");
 						fbapp.displayFunctionBlocks(fbapp);
-						say("\nCreated diagnostic harness:");
+						say("\nCreated diagnostic harness. Waiting for FORTE to start");
+						// RA_BRD build a deployment timeout into this if we do not end up starting forte successfully.
+						while (server.ConnectionCount() == 0) {
+							delay(50);
+						}						
 						return Goal.States.PASSED;
 					} else {
 						fbapp.displayFunctionBlocks(fbapp);
-						say("Could not create diagnostic harness:\n" + skills.lastErrorDescription());
+						beliefs.create("AppDeployed", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.FALSE, 
+						        	   "Could not create diagnostic harness. " + skills.lastErrorDescription());
+						say("\nCould not create diagnostic harness:\n" + skills.lastErrorDescription());
 						return Goal.States.FAILED;
 					}
 				}
@@ -196,12 +210,19 @@ public class DiagnosticAgent extends Performer implements Runnable {
 			// =========
 			@SuppressWarnings("static-access")
 			public Goal.States execute(Data data) {	
-				say("\n\n" + agentName + ": ready in identifyFault()... ");
+				beliefs.displayBeliefs();
 				
-				delay(500);
-				Thread.currentThread().yield();
-				//return Goal.States.PASSED;
-				return Goal.States.STOPPED;
+				say(agentName + ": ready in identifyFault()\n");
+				boolean status = false;
+				System.out.print("Beliefs " + beliefs.Count());
+				status = script.monitor(dps, server);
+				if (!status) {
+					return Goal.States.PASSED;
+				} else {
+					delay(500);
+					Thread.currentThread().yield();
+					return Goal.States.STOPPED;
+				}	
 			}	
 		};		
 	}			
@@ -216,27 +237,20 @@ public class DiagnosticAgent extends Performer implements Runnable {
 			// execute()
 			// =========
 			public Goal.States execute(Data data) {
-				int count = (int) data.getValue("count");
-				say("Executing diagnoseFault() from within agent instance " + agentName + " [" + outlierCount + "]");
+				boolean status = false;
+				say(agentName + ": ready in diagnoseFault()\n");
 				
-				//pause("Well. here we are...");
+				// Use the available diagnostic resources to walk through the FBA iteratively
+				// to see if the faulty component can be identified.
+				status = script.F_TO_C_CONV(dps, server);
 				
-				// RA_BRD - temporary exit
+				
+				
+				// Now all the tests has completed, mark
+				// the diagnoseFault() goal as passed so
+				// that the FDE can present a diagnosis
+				// by executing the reportFault() goal.
 				return Goal.States.PASSED;
-				
-			//	count++;
-			//	data.setValue("count", (int) count);
-			//	if (count == MAX_COUNT) {
-			//		say("Goal passed\n");
-			//		data.setValue("count", (int) 0);
-			//		return Goal.States.PASSED;
-			//	} else {
-			//		say("Goal stopped");
-					
-					// RA_BRD - temporary exit
-					
-			//		return Goal.States.STOPPED;
-			//	}
 			}
 		};
 	}
@@ -251,9 +265,10 @@ public class DiagnosticAgent extends Performer implements Runnable {
 			// execute()
 			// =========
 			public Goal.States execute(Data data) {
-				int count = (int) data.getValue("count");
-				say("Executing reportFault() from within agent instance " + agentName + " [" + count + "]");
-				// RA_BRD - temporary exit
+				say(agentName + ": ready in reportFault()\n");
+				
+				// Present a diagnosis
+		
 				return Goal.States.PASSED;
 			}
 		};
@@ -275,6 +290,7 @@ public class DiagnosticAgent extends Performer implements Runnable {
 	//
 	// pause()
 	// =======
+	@SuppressWarnings("unused")
 	private void pause(String prompt) {
 		String userInput = "";
 		BufferedReader stdIn = new BufferedReader(new InputStreamReader(System.in));
@@ -283,7 +299,6 @@ public class DiagnosticAgent extends Performer implements Runnable {
 		try {
 			userInput = stdIn.readLine();
 		} catch (IOException e) {
-			// TODO Auto-generated catch block
 			e.printStackTrace();
 		}
 	}
@@ -291,7 +306,7 @@ public class DiagnosticAgent extends Performer implements Runnable {
 	//
 	// delay()
 	// =======
-	void delay(int milliseconds) {
+	private void delay(int milliseconds) {
 		try {
 			TimeUnit.MILLISECONDS.sleep((long) milliseconds);
 		} catch (InterruptedException e) {

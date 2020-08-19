@@ -13,6 +13,11 @@
 // Software Architecture document.
 //
 // See also https://examples.javacodegeeks.com/core-java/xml/java-xml-parser-tutorial/ 
+// for more information on the SAX XML parser.
+//
+// This structure realises the SYSTEM_UNDER_DIAGNOSIS belief structure for the agent. It
+// captures the beliefs that the agent holds about the structure and configuration of the
+// function block application that it is has been tasked with diagnosing.
 //
 // Revision History
 //================
@@ -20,6 +25,7 @@
 // 23.10.2019 BRD Rationalised property names to bring them in-line with Java
 //  	          naming conventions.
 // 08.11.2019 BRD Added error handler to cache error messages.
+// 19.08.2020 BRD
 //
 package fde;
 
@@ -41,8 +47,9 @@ enum fbAppCodes {
 	UNDEFINED,			// Default undefined state.
 	INVALID_NAME,       // Blank or invalid function block name was specified.
 	INVALID_PORT_NAME,  // Name of the function block port was blank or invalid.
+	INVALID_EVENT_NAME, // The name of event was blank or invalid.
 	FB_NOT_FOUND,		// Function block specified in the command could not be found.
-	EVENT_UNDEFINED,    // No event could be found that would trigger the output data.
+	EVENT_UNDEFINED,    // No event could be found that would trigger the input or output data event.
 	REWIRE_FAILED,		// Could not rewire the function block specified. 
 	REWIRED				// Application was rewired successfully.
 }

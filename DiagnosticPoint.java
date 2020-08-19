@@ -164,7 +164,7 @@ public class DiagnosticPoint {
 		// RA_BRD
 		
 		// flush the queue since previous readings no longer matter
-		flush();
+		flush(100);
 	}
 	
 	//
@@ -180,11 +180,20 @@ public class DiagnosticPoint {
 	// =======
 	// Flush the incoming packet queue.
 	//
-	public void flush() {
-		server.flush(SIFBinstanceID);
-		while (server.inQueueSize(SIFBinstanceID) > 0) {
+	@SuppressWarnings("static-access")
+	public void flush(int milliseconds) {
+		long startTime = System.currentTimeMillis();
+		
+		while((System.currentTimeMillis() - startTime) < milliseconds) {
 			server.flush(SIFBinstanceID);
+			Thread.currentThread().yield();
+			delay(10);
 		}
+		
+	//	delay(milliseconds);
+	//	while (server.inQueueSize(SIFBinstanceID) > 0) {
+	//		server.flush(SIFBinstanceID);
+	//	}
 	}
 	
 	//

@@ -96,7 +96,7 @@ public class DiagnosticTeam extends Team {
 	//
 	private void say(String whatToSay){
 		if(!isSilent) {
-			System.err.println(whatToSay);
+			System.out.println(whatToSay);
 		}
 	}	
 }

@@ -11,6 +11,8 @@
 // ================
 // 18.10.2019 BRD Original version.
 // 05.11.2019 BRD Extended to manage data types for input and output ports.
+// 15.08.2020 BRD Refactored the data types used by the diagnostic function 
+//                blocks.
 
 package fde;
 
@@ -24,26 +26,28 @@ enum VarTypes {
 // DATA TYPES
 // ==========
 // The data types used by 4DIAC and FORTE to define input and output data types for
-// function blocks. These enumerations are also used by the AGENT_SEND and AGENT_RECV
-// function blocks to signal what data type is is being sent or is being received.
+// function blocks. These enumerations are also used by the AGENT_GATE in the DP
+// composite function block to signal what data type is is being sent or is being 
+// received.
 //
 class DataTypes {
-	public static final int DATA_UNDEFINED = -1;	
-	public static final int DATA_INT = 0;
-	public static final int DATA_LINT = 1;
-	public static final int DATA_REAL = 2;
-	public static final int DATA_LREAL = 3;
-	public static final int DATA_STRING = 4;
-	public static final int DATA_WSTRING = 5;
-	public static final int DATA_BOOL = 6;
+	public static final int DATATYPE_UNDEFINED = -1;
+	public static final int DATATYPE_EVENT = 0;
+	public static final int DATATYPE_INT = 1;
+	public static final int DATATYPE_LINT = 2;
+	public static final int DATATYPE_REAL = 3;
+	public static final int DATATYPE_LREAL = 4;
+	public static final int DATATYPE_STRING = 5;
+	public static final int DATATYPE_WSTRING = 6;
+	public static final int DATATYPE_BOOL = 7;
 }
 
 public class FunctionBlockVariable {
-	String Name = "";
-	VarTypes VarType = VarTypes.VAR_UNDEFINED;  
-	int DataType = DataTypes.DATA_INT;
-	String Comment = "";
-	String InitialValue = "";
+	private String Name = "";
+	private VarTypes VarType = VarTypes.VAR_UNDEFINED;  
+	private int DataType = DataTypes.DATATYPE_INT;
+	private String Comment = "";
+	private String InitialValue = "";
 			
 	//
 	// Get Name()
@@ -123,35 +127,35 @@ public class FunctionBlockVariable {
 	// data type for that variable.
 	//
 	public int DataTypeFromString(String dataTypeDesc) {
-		int dataType = DataTypes.DATA_UNDEFINED;
+		int dataType = DataTypes.DATATYPE_UNDEFINED;
 		
 		switch (dataTypeDesc) {
 		case "INT":
-			dataType = DataTypes.DATA_INT;
+			dataType = DataTypes.DATATYPE_INT;
 			break;
 				
 		case "LINT":
-			dataType = DataTypes.DATA_LINT;
+			dataType = DataTypes.DATATYPE_LINT;
 			break;
 			
 		case "REAL":
-			dataType = DataTypes.DATA_REAL;
+			dataType = DataTypes.DATATYPE_REAL;
 			break;
 			
 		case "LREAL":
-			dataType = DataTypes.DATA_LREAL;
+			dataType = DataTypes.DATATYPE_LREAL;
 			break;
 			
 		case "STRING":
-			dataType = DataTypes.DATA_STRING;
+			dataType = DataTypes.DATATYPE_STRING;
 			break;
 			
 		case "WSTRING":
-			dataType = DataTypes.DATA_WSTRING;
+			dataType = DataTypes.DATATYPE_WSTRING;
 			break;
 			
 		case "BOOL":
-			dataType = DataTypes.DATA_BOOL;
+			dataType = DataTypes.DATATYPE_BOOL;
 			break;
 		}
 		return dataType;
@@ -165,31 +169,31 @@ public class FunctionBlockVariable {
 		String dataTypeDesc = "";
 		
 		switch (dataType) {
-		case DataTypes.DATA_INT:
+		case DataTypes.DATATYPE_INT:
 			dataTypeDesc = "INT";
 			break;
 				
-		case DataTypes.DATA_LINT:
+		case DataTypes.DATATYPE_LINT:
 			dataTypeDesc = "LINT";
 			break;
 			
-		case DataTypes.DATA_REAL:
+		case DataTypes.DATATYPE_REAL:
 			dataTypeDesc = "REAL";
 			break;
 			
-		case DataTypes.DATA_LREAL:
+		case DataTypes.DATATYPE_LREAL:
 			dataTypeDesc = "LREAL";
 			break;
 			
-		case DataTypes.DATA_STRING:
+		case DataTypes.DATATYPE_STRING:
 			dataTypeDesc = "STRING";
 			break;
 			
-		case DataTypes.DATA_WSTRING:
+		case DataTypes.DATATYPE_WSTRING:
 			dataTypeDesc = "WSTRING";
 			break;
 			
-		case DataTypes.DATA_BOOL:
+		case DataTypes.DATATYPE_BOOL:
 			dataTypeDesc = "BOOL";
 			break;
 		}	

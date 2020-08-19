@@ -13,7 +13,7 @@
 // interact with the target Function Block Application that is being
 // monitored or diagnosed.
 //
-// AUT University - Barry Dowdeswell - 2019-2020
+// AUT University - 2019-2020
 //
 // Revision History
 // ================

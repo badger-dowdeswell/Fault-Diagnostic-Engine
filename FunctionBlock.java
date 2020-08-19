@@ -193,8 +193,8 @@ public class FunctionBlock {
 		int ptr = NOT_FOUND;
 		int count = fbVariables.size();
 		for (int pos = 0 ; pos < count;  pos++) {
-			FunctionBlockVariable fbVariable = fbVariables.get(pos);
-			if (fbVariable.Name.equals(varName)) {
+			FunctionBlockVariable fbVariable = fbVariables.get(pos);			
+			if (fbVariable.Name().equals(varName)) {
 				ptr = pos;
 				break;
 			}
@@ -207,9 +207,9 @@ public class FunctionBlock {
 	// ========
 	public void addVar(String varName, VarTypes varType, int dataType, String comment, String initialValue) {
 		FunctionBlockVariable fbVariable = new FunctionBlockVariable();
-		fbVariable.Name = varName;
-		fbVariable.VarType = varType;
-		fbVariable.DataType = dataType;
+		fbVariable.Name(varName);
+		fbVariable.VarType(varType);
+		fbVariable.DataType(dataType);
 		fbVariable.Comment(comment);
 		fbVariable.InitialValue(initialValue);
 		fbVariables.add(fbVariable);
@@ -227,7 +227,7 @@ public class FunctionBlock {
 			return fbVariable;			
 		}
 		
-		fbVariable.Name = "";
+		fbVariable.Name("");
 		return fbVariable;
 	}
 	

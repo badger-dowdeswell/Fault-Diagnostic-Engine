@@ -35,6 +35,8 @@
 // 06.03.2020 BRD Created a Unit Test for the queuePacket() method. 
 // 09.03.2020 BRD Handled the exception that is raised when the client 
 //                disconnects while the server has replies queued to post-back.
+// 11.08.2020 BRD Added cntConnections() method to return the number of connections
+//                that are currently open.
 //
 package fde;
 
@@ -56,8 +58,9 @@ public class NIOserver implements Runnable {
 	// simultaneous asynchronous in and out queues FIFO queues.
 	// RA_BRD - could we make this dynamic?
 	final int MAX_CLIENTS = 25;
-	boolean isSilent = false;
-	boolean unitTesting = false;
+	private int cntConnections = 0;
+	private boolean isSilent = false;
+	private boolean unitTesting = false;
 
 	// Data packet field separators. Please ensure
 	// that any changes to these are also implemented
@@ -66,10 +69,10 @@ public class NIOserver implements Runnable {
 	final static String FIELD_SEPARATOR = "|";
 	final static String END_OF_PACKET = "&"; 
 
-	String hostName = "";
-	int listenerPortNumber = 0;
-	int serverStatus = ExitCodes.UNDEFINED;
-	String replyPacket = "";
+	private String hostName = "";
+	private int listenerPortNumber = 0;
+	private int serverStatus = ExitCodes.UNDEFINED;
+	private String replyPacket = "";
 	
 	// FIFO queue for packets
 	// ======================
@@ -181,6 +184,7 @@ public class NIOserver implements Runnable {
 							// Set the socket to read and write mode.
 							sc.register(selector,  SelectionKey.OP_READ | SelectionKey.OP_WRITE);
 							say("Connection accepted on local address " + sc.getLocalAddress() + "\n");
+							cntConnections++;
 						}
 
 						if (key.isReadable()) {
@@ -210,6 +214,10 @@ public class NIOserver implements Runnable {
 									// session.
 									sc.close();
 									say("Connection closed");
+									cntConnections--;
+									if (cntConnections < 0) {
+										cntConnections = 0;
+									}
 								} else {
 									SIFBinstanceID = queuePacket(dataPacket);
 								}	
@@ -416,6 +424,13 @@ public class NIOserver implements Runnable {
 	// ==================
 	public int outQueueSize(int ptrQueue) {
 		return outFIFOqueue[ptrQueue].size();
+	}
+	
+	//
+	// ConnectionCount()
+	// =================
+	public int ConnectionCount() {
+		return cntConnections;
 	}
 	
 	//

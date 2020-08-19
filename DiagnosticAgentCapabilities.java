@@ -52,7 +52,9 @@ public class DiagnosticAgentCapabilities {
 	//
 	// server
 	//
-	public boolean createHarness(FunctionBlockApp fbapp, List<DiagnosticPoint> dps, String applicationPath, NIOserver server) {
+	// ublic boolean createHarness(FunctionBlockApp fbapp, List<DiagnosticPoint> dps, String applicationPath, NIOserver server) {
+	
+	public boolean createHarness(FunctionBlockApp fbapp, DiagnosticPoints dps, String applicationPath, NIOserver server) {
 		boolean status = true;
 		boolean foundConnection = false;
 		
@@ -102,9 +104,9 @@ public class DiagnosticAgentCapabilities {
 									dp.fbPortName = diag.Name(dpptr);
 									dp.SIFBinstanceID = SIFBinstanceID;
 									dp.fbapp = fbapp;
-									dp.server = server;							                  
+									dp.server = server;	
 									dps.add(dp);
-									say("dps size " + dps.size());
+									say("dps size " + dps.count());
 								}
 								break;
 								
@@ -124,14 +126,14 @@ public class DiagnosticAgentCapabilities {
 				}
 			}
 			
-			if ((dps.size() > 0) && (status == true)) {
+			if ((dps.count() > 0) && (status == true)) {
 				// There is at least one diagnostic point to create. This next pass rewires the application to 
-				// wire-in the individual diagnostic points.
+				// insert and wire-up the individual diagnostic points.
 				DiagnosticPoint dp = new DiagnosticPoint();
 				fbAppCodes dpStatus = fbAppCodes.UNDEFINED;	
 				
 				say("\nRewiring...");
-				for (int dpptr = 0; dpptr < dps.size(); dpptr++) {
+				for (int dpptr = 0; dpptr < dps.count(); dpptr++) {
 					dp = dps.get(dpptr);
 					dpStatus = createDP(dp, fbapp, server, errorHandler);
 					if (dpStatus != fbAppCodes.REWIRED) {
@@ -142,7 +144,7 @@ public class DiagnosticAgentCapabilities {
 				
 				if (status) {
 					if (!createForteBootfile(fbapp, applicationPath + "", errorHandler)) {
-						say("Could not create diagnostic harness. " + errorHandler.Description());
+						say("Could not create a diagnostic harness in forte.boot. " + errorHandler.Description());
 						status = false;
 					}	
 				}
@@ -154,8 +156,8 @@ public class DiagnosticAgentCapabilities {
 	//
 	// createDP()
 	// ==========
-	// Rewires the function block application to add in a new DP function block instance 
-	// and configure its parameters.
+	// Rewires the function block application to insert a new DP function block instance and
+	// configure its parameters.
 	//
 	// dp               Instance of the diagnostic point that is being created. This contains
 	//                  most of the information about the diagnostic block needed to wire it
@@ -180,9 +182,10 @@ public class DiagnosticAgentCapabilities {
 		String eventName = "";
 		int ptrWith = 0;
 		int ptrVar = 0;
+		int ptrEvent = 0;
 		String inputPort = "";
 		String outputPort = "";
-		int dataType = DataTypes.DATA_INT;
+		int dataType = DataTypes.DATATYPE_INT;
 		FBTypeDef fbTypeDef = new FBTypeDef();
 		
 		String sourceFB = "";
@@ -206,11 +209,11 @@ public class DiagnosticAgentCapabilities {
 			ptrVar = fb.findVar(dp.fbPortName);
 			if (ptrVar != NOT_FOUND) {
 				fbVar = fb.Var(ptrVar);
-				switch (fbVar.VarType) {
+				switch (fbVar.VarType()) {
 				case VAR_INPUT:
 					// Locate the event that is used to trigger this data input.
 					ptrWith = NOT_FOUND;
-					for (int ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
+					for (ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
 						fbEvent = fb.Event(ptrEvent);
 						// Only input data types and events can be triggered.
 						if (fbEvent.EventType == EventTypes.EVENT_INPUT) {
@@ -280,7 +283,7 @@ public class DiagnosticAgentCapabilities {
 				case VAR_OUTPUT:
 					// Locate the event that is used to trigger this data output.
 					ptrWith = NOT_FOUND;
-					for (int ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
+					for (ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
 						fbEvent = fb.Event(ptrEvent);
 						// Only output data types and events can be triggered.
 						if (fbEvent.EventType == EventTypes.EVENT_OUTPUT) {
@@ -354,9 +357,26 @@ public class DiagnosticAgentCapabilities {
 				}
 				
 			} else {
-				// RA_BRD this is where we cater for DPs that are  triggering or monitoring events. It is not 
-				// really an invalid port in that case...				
-				status = fbAppCodes.INVALID_PORT_NAME;
+				// This is where we cater for DPs that are triggering or monitoring events, not data inputs
+				// or data outputs. 
+				ptrEvent = fb.findEvent(dp.fbPortName);
+				if (ptrEvent != NOT_FOUND) {
+					fbEvent = fb.Event(ptrEvent);
+					switch (fbEvent.EventType()) {
+					case EVENT_INPUT:
+						
+						break;
+						
+					case EVENT_OUTPUT:
+						
+						break;
+					}
+					
+					
+					
+				} else {
+					status = fbAppCodes.INVALID_EVENT_NAME;
+				}
 			}
 		} else {
 			status = fbAppCodes.FB_NOT_FOUND;
@@ -472,7 +492,7 @@ public class DiagnosticAgentCapabilities {
 		String eventName = "";
 		int ptrWith = 0;
 		String inputPort = "";
-		int dataType = DataTypes.DATA_INT;
+		int dataType = DataTypes.DATATYPE_INT;
 		FBTypeDef fbTypeDef = new FBTypeDef();
 		
 		FunctionBlock fb = new FunctionBlock();
@@ -577,7 +597,7 @@ public class DiagnosticAgentCapabilities {
 		String eventName = "";
 		int ptrWith = 0;
 		String outputPort = "";
-		int dataType = DataTypes.DATA_INT;
+		int dataType = DataTypes.DATATYPE_INT;
 		FBTypeDef fbTypeDef = new FBTypeDef();
 		
 		FunctionBlock fb = new FunctionBlock();
