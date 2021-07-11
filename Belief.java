@@ -107,8 +107,19 @@ public class Belief {
 	//
 	// addDescription()
 	// ================
+	// RA_BRD To be deprecated. Use .add()
 	//
 	public void addDescription(String beliefDescription) {
+		descriptionHandler.addDescription(beliefDescription);
+	}
+	
+	//
+	// add()
+	// =====
+	// RA_BRD Works the same way as addDescription() which will be
+	// deprecated later.
+	//
+	public void add(String beliefDescription) {
 		descriptionHandler.addDescription(beliefDescription);
 	}
 

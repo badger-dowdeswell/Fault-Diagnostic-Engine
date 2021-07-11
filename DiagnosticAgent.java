@@ -4,7 +4,7 @@
 // Implements the DiagnosticAgent instance that inherits a set of
 // Team goals for finding and diagnosing faults.
 //
-// AUT University
+// AUT University - 2019-2021
 //
 // Revision History
 // ================
@@ -12,13 +12,16 @@
 //                from Dennis Jarvis.
 // 03.07.2019 BRD Moved goal execute() methods into this class to allow multiple agents
 //                to be instanced properly.
+// 26.01.2021 BRD Extending the re-wire capabilities and evaluating HVAC2.
+// 24.03.2021 BRD Integrate latest multi-agent extensions and change the threading
+//                model used.
 //
 // Documentation
 // =============
 // The diagnostic agent is analogous to the Cell class that extends the Team class from Chapter
 // Five of the GORITE book. The agent extends the GORITE Performer class,
 //
-// The execute() method of a Goal definition is key to an agent's ability to perform a the tasks
+// The execute() method of a Goal definition is key to an agent's ability to perform the tasks
 // required to achieve that goal. It is where the real work for a goal gets done. 
 //
 // When GORITE calls this method, it performs steps to try and fulfill the goal and then exits
@@ -41,102 +44,129 @@ import java.io.IOException;
 
 import fde.ExitCodes;
 import static fde.Constants.*;
+import static fde.AgentStates.*;
 
-public class DiagnosticAgent extends Performer implements Runnable {
+public class DiagnosticAgent implements Runnable {
 	// Used to turn off and on console messages during development.
 	private boolean isSilent = false;
-	
 	private String agentName = "";
+	private String currentGoalName = UNDEFINED_GOAL;
+	private String lastGoalName = "";
+	private Goal.States currentGoalState = Goal.States.STOPPED;
+	private int currentAgentState = AgentStates.IDLE;
 	
-	// RA_BRD temporary values used during early diagnostic testing runs ..
-	int packetCount = 0; // RA_BRD temporary
-	int cycleCount = 0;
-	int dataValue = 0;
-	float testTemperature = (float) 30.00;
-	float sampledData = 0;
-	float lastSample = 9999;
-	int outlierCount = 0;
-		
+	private String homeDirectory = System.getProperty("user.home");
+	
 	String packetValue = "";
 
-	public static int MAX_COUNT = 50000;
 	private boolean clientIsConnected = false;
 	
+	int cycleCount = 0;
+		
+	//
+	// AgentModes
+	// ==========
+	// These must match the codes declared in AGENT_GATE.h
+	// since they are used to determine which mode the
+	// diagnostic function block is operating in.
+	//
 	class AgentModes {
 		static final int UNDEFINED = 0;
 		static final int PASSTHROUGH_ENABLED = 1;
 		static final int TRIGGER_ENABLED = 2;		
 		static final int TRIGGER_DATA_VALUE = 3;
-		static final int POLL_AGENT = 4;
-		static final int SAMPLED_DATA = 5;
+		static final int TRIGGER_EVENT = 4;
+		static final int POLL_AGENT = 5;
+		static final int SAMPLED_DATA = 6;
+		static final int TIMESTAMP = 7;
 	}
+	int currentAgentMode = AgentModes.PASSTHROUGH_ENABLED; 
 	
+	//
+	// PacketDelimiters
+	// ================
+	// Defines the packet delimiters used to construct and
+	// unpack data packets exchanged between the agent and
+	// the diagnostic point function block.
+	//
 	class PacketDelimiters {
 		static final String START_OF_PACKET = "*";
 		static final String FIELD_SEPARATOR = "|";
 		static final String END_OF_PACKET = "&"; 
 	}
-	
-	int currentAgentMode = AgentModes.PASSTHROUGH_ENABLED; 
-	
+
 	DiagnosticAgentCapabilities skills = new DiagnosticAgentCapabilities();
-	FunctionBlockApp fbapp = new FunctionBlockApp();
-	Beliefs beliefs = new Beliefs();
-	
-	DiagnosticPoints dps = new DiagnosticPoints();
-	
-	// Create a runnable instance of the server. This will
-	// manage all communications from the function block
-	// application to this agent.
-	//
-	// RA_BRD - how should we define the server configuration? It is 
-	// part of this diagnostic engine instance (and perhaps this is
-	// the server used by this team of agents, so it is perhaps higher
-	// up the hierarchy?
-	//
-	NIOserver server = new NIOserver("127.0.0.3", 62503); 
-	
-	// RA_BRD temporary instantiation of the dynamic script library.
-	Scripts script = new Scripts();
+	Scripts scripts = new Scripts();
+	NIOserver server;
+    DiagnosticPoints dps;
 
-	// Setup the application information. <RA_BRD - this will need to come
-	// from higher up the chain of command later...
-	private String homeDirectory = System.getProperty("user.home");
+    //
+    // Constructor 
+	// ===========
+	public DiagnosticAgent(String agentName, NIOserver server, DiagnosticPoints dps) {
+		this.agentName = agentName;
+		this.server = server;
+		this.dps = dps;
+		
+		say("Created DiagnosticAgent " + agentName);
+	}
 	
-	// RA_BRD - should this information come from the Team?
-	String applicationPath = homeDirectory + "/Development/4diac/HVAC/";
-	private String applicationName = "HVAC";
-
-	Action diagnose = new Action(DiagnosticTeam.FIND_FAULTS) {
-		public Goal.States execute(
-			boolean reentry, Data.Element[] ins, Data.Element[] outs) {
-			return Goal.States.PASSED;
-		}
-	};
-
-	//
-	// run()
-	// =====
+	// 
+	//  run()
+	//  =====
 	@Override
 	public void run() {
+		int sleepTime = 0;
 		
-	}
-	
-	public DiagnosticAgent(String agentName) {
-		super(agentName);
-		this.agentName = agentName;
-		say("Created DiagnosticAgent " + agentName);
-		
-		new Thread(server).start(); 
+		while (true) {
+			cycleCount++;
+			
+			switch (currentAgentState) {
+			case AgentStates.EXECUTING:
+				// The agent has a new goal. Execute it, returning
+				// only when complete or the goal has been abandoned.
+				say(agentName + ": " + currentGoalName + " [" + cycleCount + "]");
+				switch (currentGoalName) {
+				case CONFIGURE_DIAGNOSTICS:
+					GoalState(configureDiagnostics());
+					AgentState(AgentStates.IDLE);
+					break;
+					
+				case WATCH_FOR_FAULTS:
+					GoalState(watchForFaults());
+					AgentState(AgentStates.IDLE);
+					break;
+					
+				case DIAGNOSE_FAULTS:
+					GoalState(diagnoseFaults());
+					AgentState(AgentStates.IDLE);
+					break;
+					
+				case REPORT_FAULTS:
+					GoalState(reportFaults());
+					AgentState(AgentStates.IDLE);
+					break;
+				}	
+				break;	
+			
+			case AgentStates.IDLE:
+			case AgentStates.UNDEFINED:
+				if (GoalName().equals(UNDEFINED_GOAL)) {
+					// The agent is not working on any assigned task at the moment. 
+					//say(agentName + " sleeping ...");
+					// RA_BRD parameterise this? 
+					sleep(1000);
+				} else {	
+					// The agent is idle, but the coordinator agent has just
+					// assigned a new goal. Start executing it now.
+					currentGoalName = GoalName();
+					AgentState(AgentStates.EXECUTING);
+				}
 
-		// Create and add team goals to this agent. The method create() takes as its
-		// arguments the names of the elements in the data context that
-		// are to be used as the inputs and outputs for the goal execution.
-		// Execution will not proceed until all inputs have been assigned values.
-		//
-		addGoal(diagnose.create(new String[] {DiagnosticTeam.FIND_FAULTS}, null));
-		say("Assigned role FIND_FAULTS to " + this.agentName + "\n");
-	}
+				break;
+			}
+		}
+	}	
 
 	//
 	// GOAL EXECUTION
@@ -147,131 +177,129 @@ public class DiagnosticAgent extends Performer implements Runnable {
 	// that process fails, the agent abandons this goal. All remaining goals are terminated
 	// except the final reporting goal.
 	//
-	Goal configureDiagnostics() {
-		say("Setting up goal configureDiagnostics()");
-		return new Goal (CONFIGURE_DIAGNOSTICS) {
-			//
-			// execute()
-			// =========
-			public Goal.States execute(Data data) {
-				int loadStatus = XMLErrorCodes.UNDEFINED;
-
-				// Load the function block application information.  
-				beliefs.create("AppName", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, applicationName);
-				beliefs.create("AppPath", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, applicationPath);
-				           
-				loadStatus = fbapp.load(applicationPath, applicationName + ".sys");
-				
-				if (loadStatus != XMLErrorCodes.LOADED) {
-					say("Function block application " + applicationName + ".sys could not be loaded.\n" + fbapp.lastErrorDescription);
-					beliefs.create("LoadStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.FALSE, 
-						           "Function block application " + applicationName + ".sys could not be loaded.\n" + fbapp.lastErrorDescription);
-					return Goal.States.FAILED;
-					
-				} else {
-					beliefs.create("LoadStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, "Application loaded successfully.");
-					
-					// Create and deploy the diagnostic test harness.
-					if (skills.createHarness(fbapp, dps, applicationPath, server)) {
-						beliefs.create("DeployedStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, "Application deployed successfully.");
-						fbapp.displayFunctionBlocks(fbapp);
-						say("\nCreated diagnostic harness. Waiting for FORTE to start");
-						// RA_BRD build a deployment timeout into this if we do not end up starting forte successfully.
-						while (server.ConnectionCount() == 0) {
-							delay(50);
-						}						
-						return Goal.States.PASSED;
-					} else {
-						fbapp.displayFunctionBlocks(fbapp);
-						beliefs.create("AppDeployed", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.FALSE, 
-						        	   "Could not create diagnostic harness. " + skills.lastErrorDescription());
-						say("\nCould not create diagnostic harness:\n" + skills.lastErrorDescription());
-						return Goal.States.FAILED;
-					}
-				}
-			}
-		};
+	private Goal.States configureDiagnostics() {
+		for (int cnt = 0; cnt < 5; cnt ++) {
+			say(agentName + ": configuring stuff [" + cnt + "] ...\n");
+			sleep(1000);
+		}
+		
+		// Signal that the agent has completed this...or it has failed..
+		//currentGoalState(Goal.States.PASSED);
+		return Goal.States.PASSED;
 	}
-
-	//
-	// identifyFault()
-	// ===============
-	// This goal performs the primary goal of watching the function block application and
-	// identifying when a fault symptom appears.
-	//
-	// RA_BRD dynamic diagnostic monitor launch code for later
-	// skills.runDiagnostic(applicationPath, "MyClass"); System.exit(0); 
-	//
-	Goal identifyFault() {
-		say("Setting up goal identifyFault()");
-		return new Goal (IDENTIFY_FAULT) {
-			//
-			// execute()
-			// =========
-			@SuppressWarnings("static-access")
-			public Goal.States execute(Data data) {	
-				beliefs.displayBeliefs();
-				
-				say(agentName + ": ready in identifyFault()\n");
-				boolean status = false;
-				System.out.print("Beliefs " + beliefs.Count());
-				status = script.monitor(dps, server);
-				if (!status) {
-					return Goal.States.PASSED;
-				} else {
-					delay(500);
-					Thread.currentThread().yield();
-					return Goal.States.STOPPED;
-				}	
-			}	
-		};		
+	
+	// 
+	//  watchForFaults()
+	//  ================
+	//  This goal performs the primary goal of watching the function block application and
+	//  identifying when a fault symptom appears.
+	// 
+	//  RA_BRD dynamic diagnostic monitor launch code for later
+	//  skills.runDiagnostic(applicationPath, "MyClass"); System.exit(0); 
+	// 
+	private Goal.States watchForFaults(){
+		Belief belief = new Belief();
+		switch (agentName) {
+		case "alpha":
+			belief = scripts.alphaMonitor(agentName, dps, server);
+			break;
+			
+		case "beta":
+			belief = scripts.betaMonitor(agentName, dps, server);
+			break;
+		}
+			
+		// Signal that the agent has completed this...or it has failed..
+		if (belief.Veracity() == VeracityTypes.FALSE) {
+			// The agent has detected a problem
+			return Goal.States.FAILED;
+		} else {
+			return Goal.States.PASSED;
+		}	
 	}			
 				
-	//
-	// diagnoseFault()
-	// ===============
-	Goal diagnoseFault() {
-		say("Setting up goal diagnoseFault()");
-		return new Goal (DIAGNOSE_FAULT) {
-			//
-			// execute()
-			// =========
-			public Goal.States execute(Data data) {
-				boolean status = false;
-				say(agentName + ": ready in diagnoseFault()\n");
-				
-				// Use the available diagnostic resources to walk through the FBA iteratively
-				// to see if the faulty component can be identified.
-				status = script.F_TO_C_CONV(dps, server);
-				
-				
-				
-				// Now all the tests has completed, mark
-				// the diagnoseFault() goal as passed so
-				// that the FDE can present a diagnosis
-				// by executing the reportFault() goal.
-				return Goal.States.PASSED;
+	// 
+	// diagnoseFaults()
+	// ================
+	private Goal.States diagnoseFaults() {
+		Belief belief = new Belief();
+	
+		switch (agentName) {
+		case "beta":
+			belief =  scripts.betaOvercurrent(agentName, dps, server);
+			break;
+		
+		case "marvin":
+			//belief = scripts.HVACsim(dps, server);
+			//belief = scripts.Monitor2(dps, server);
+			
+			belief = scripts.gimbal2(dps, server);
+			say(belief.Description());
+			break;
+			
+		case "Beta":
+			belief =  scripts.Overcurrent(agentName, dps, server);
+			break;
+		
+		case "dennis":
+			if (scripts.tripMux(agentName, dps, server)) {
 			}
-		};
+			break;
+		}
+		return Goal.States.PASSED;
 	}
 
+	// 
+	//  reportFaults()
+	//  =============
+	private Goal.States reportFaults() {
+		for (int cnt = 0; cnt < 5; cnt ++) {
+			say(agentName + ": preparing diagnosis report [" + cnt + "] ...\n");
+			sleep(1000);
+		}
+		// Signal that the agent has completed this...or it has failed..
+		//currentGoalState(Goal.States.PASSED);
+		return Goal.States.PASSED;
+	}
+	
 	//
-	// reportFault()
-	// =============
-	Goal reportFault() {
-		say("Setting up goal reportFault()");
-		return new Goal (REPORT_FAULT) {
-			//
-			// execute()
-			// =========
-			public Goal.States execute(Data data) {
-				say(agentName + ": ready in reportFault()\n");
-				
-				// Present a diagnosis
-		
-				return Goal.States.PASSED;
-			}
-		};
+	// get GoalName()
+	// ==============
+	public String GoalName() {
+		return this.currentGoalName;
+	}
+	
+	// set GoalName()
+	// ==============
+	public void GoalName(String goalName) {
+		this.currentGoalName = goalName;
+	}
+	
+	//
+	// get GoalState()
+	// ===============
+	public Goal.States GoalState() {
+		return this.currentGoalState;
+	}
+	
+	// set GoalState()
+	// ================
+	public void GoalState(Goal.States goalState) {
+		this.currentGoalState = goalState;
+	}
+	
+	//
+	// get AgentState()
+	// ================
+	public int AgentState() {
+		return this.currentAgentState;
+	}
+	
+	//
+	// set AgentState()
+	// ================
+	public void AgentState(int agentState) {
+		this.currentAgentState = agentState;
 	}
 
 	//
@@ -303,9 +331,26 @@ public class DiagnosticAgent extends Performer implements Runnable {
 		}
 	}
 	
+	// 
+	// sleep()
+	// =======
+	// Put this thread to sleep for a specified number of milliseconds.
+	//
+	@SuppressWarnings("unused")
+	private void sleep(int sleepTime) {
+		try {			
+			Thread.sleep(sleepTime);
+		} catch (InterruptedException e) {
+		}
+	}
+	
 	//
 	// delay()
 	// =======
+	// Delay for a specified number of milliseconds. This is an
+	// alternative to the sleep() method.
+	//
+	@SuppressWarnings("unused")
 	private void delay(int milliseconds) {
 		try {
 			TimeUnit.MILLISECONDS.sleep((long) milliseconds);
@@ -314,11 +359,140 @@ public class DiagnosticAgent extends Performer implements Runnable {
 		}	
 	}
 }
+
+//
+// ============================================================================================================
+// RA_BRD - Code in the basement
+// ============================================================================================================	
+//
+//	Goal configureDiagnostics() {
+//		say("Setting up goal configureDiagnostics()");
+//		return new Goal (CONFIGURE_DIAGNOSTICS) {
+//			//
+//			// execute()
+//			// =========
+//			public Goal.States execute(Data data) {
+//				int loadStatus = XMLErrorCodes.UNDEFINED;
+//
+//				// Load the function block application information.  
+//				beliefs.create("AppName", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, applicationName);
+//				beliefs.create("AppPath", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, applicationPath);
+//				           
+//				loadStatus = fbapp.load(applicationPath, applicationName + ".sys");
+//				
+//				if (loadStatus != XMLErrorCodes.LOADED) {
+//					say("Function block application " + applicationName + ".sys could not be loaded.\n" + fbapp.lastErrorDescription);
+//					beliefs.create("LoadStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.FALSE, 
+//						           "Function block application " + applicationName + ".sys could not be loaded.\n" + fbapp.lastErrorDescription);
+//					return Goal.States.FAILED;
+//					
+//				} else {
+//					beliefs.create("LoadStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, "Application loaded successfully.");
+//					
+//					// Create and deploy the diagnostic test harness.
+//					if (skills.createHarness(fbapp, dps, applicationPath, server)) {
+//						beliefs.create("DeployedStatus", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.TRUE, "Application deployed successfully.");
+//						fbapp.displayFunctionBlocks(fbapp);
+//						say("\nCreated diagnostic harness. Waiting for FORTE to start");
+//						// RA_BRD build a deployment timeout into this if we do not end up starting forte successfully.
+//						while (server.ConnectionCount() == 0) {
+//							delay(50);
+//						}						
+//						return Goal.States.PASSED;
+//					} else {
+//						fbapp.displayFunctionBlocks(fbapp);
+//						beliefs.create("AppDeployed", BeliefTypes.SYSTEM_UNDER_DIAGNOSIS, VeracityTypes.FALSE, 
+//						        	   "Could not create diagnostic harness. " + skills.lastErrorDescription());
+//						say("\nCould not create diagnostic harness:\n" + skills.lastErrorDescription());
+//						return Goal.States.FAILED;
+//					}
+//				}
+//			}
+//		};
+//	}
+
+	//
+	// identifyFault()
+	// ===============
+	// This goal performs the primary goal of watching the function block application and
+	// identifying when a fault symptom appears.
+	//
+	// RA_BRD dynamic diagnostic monitor launch code for later
+	// skills.runDiagnostic(applicationPath, "MyClass"); System.exit(0); 
+	//
+//	Goal identifyFault() {
+//		say("Setting up goal identifyFault()");
+//		return new Goal (IDENTIFY_FAULT) {
+//			//
+//			// execute()
+//			// =========
+//			@SuppressWarnings("static-access")
+//			public Goal.States execute(Data data) {	
+//				beliefs.displayBeliefs();
+//				
+//				say("\n" + agentName + ": ready in identifyFault()\n");
+//				boolean status = false;
+//				status = script.IED64(dps, server);
+//				if (!status) {
+//					return Goal.States.PASSED;
+//				} else {
+//					delay(500);
+//					Thread.currentThread().yield();
+//					return Goal.States.STOPPED;
+//				}	
+//			}	
+//		};		
+//	}			
+//				
+//	//
+//	// diagnoseFault()
+//	// ===============
+//	Goal diagnoseFault() {
+//		say("Setting up goal diagnoseFault()");
+//		return new Goal (DIAGNOSE_FAULT) {
+//			//
+//			// execute()
+//			// =========
+//			public Goal.States execute(Data data) {
+//				boolean status = false;
+//				say("\n" + agentName + ": ready in diagnoseFault()\n");
+//				
+//				// Use the available diagnostic resources to walk through the FBA iteratively
+//				// to see if the faulty component can be identified.
+//	//			status = script.F_TO_C_CONV(dps, server);
+//				
+//	//			beliefs.create("Z_TEMPERATURE", BeliefTypes.DYNAMIC, VeracityTypes.FALSE, "Intermittant behaviour");
+//						
+//				// Now all the tests has completed, mark
+//				// the diagnoseFault() goal as passed so
+//				// that the FDE can present a diagnosis
+//				// by executing the reportFault() goal.
+//				return Goal.States.PASSED;
+//			}
+//		};
+//	}
+//
+//	//
+//	// reportFault()
+//	// =============
+//	Goal reportFault() {
+//		say("Setting up goal reportFault()");
+//		return new Goal (REPORT_FAULT) {
+//			//
+//			// execute()
+//			// =========
+//			public Goal.States execute(Data data) {
+//				say("\n" + agentName + ": ready in reportFault()\n");
+//				
+//				// Present a diagnosis
+//				beliefs.displayBeliefs();
+//				return Goal.States.PASSED;
+//			}
+//		};
+//	}
 	
-//============================================================================================================
-//RA_BRD - Code in the basement
-//=============================	
 	
+
 			//	int serverStatus = ExitCodes.UNDEFINED;
 			//	int count = (int) data.getValue("count");
 			//	NIOserverPacket packet = new NIOserverPacket();
@@ -824,3 +998,43 @@ public class DiagnosticAgent extends Performer implements Runnable {
 // for longer-term development and debugging use.
 //
 
+
+// ====================================================================
+//FunctionBlockApp fbapp = new FunctionBlockApp();
+//Beliefs beliefs = new Beliefs();
+
+//DiagnosticPoints dps = new DiagnosticPoints();
+
+// Create a runnable instance of the server. This will
+// manage all communications from the function block
+// application to this agent.
+//
+// RA_BRD - how should we define the server configuration? It is 
+// part of this diagnostic engine instance (and perhaps this is
+// the server used by this team of agents, so it is perhaps higher
+// up the hierarchy?
+//
+//NIOserver server = new NIOserver("127.0.0.3", 62503); 
+// =====================================================================
+
+// RA_BRD temporary instantiation of the dynamic script library.
+//Scripts script = new Scripts();
+
+// Setup the application information. 
+// <RA_BRD - this will need to come from higher up the chain of command later...
+//
+//private String homeDirectory = System.getProperty("user.home");
+
+// RA_BRD - should this information come from the Team Manager?
+//String applicationPath = homeDirectory + "/Development/4diac/HVAC2/";
+//private String applicationName = "HVAC2";
+
+//String applicationPath = homeDirectory + "/Development/4diac/Smart_Grid_02/";
+//private String applicationName = "Smart_Grid_02";
+
+//Action diagnose = new Action(DiagnosticTeam.FIND_FAULTS) {
+//	public Goal.States execute(
+//		boolean reentry, Data.Element[] ins, Data.Element[] outs) {
+//		return Goal.States.PASSED;
+//	}
+//};

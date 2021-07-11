@@ -6,13 +6,17 @@
 // an application, create a test harness, create FORTE boot files and other 
 // abilities that allow the agent to work with a function block applications.
 //
-// AUT University - 2019-2020
+// AUT University - 2019-2021
 //
 // Revision History
 // ================
 // 24.10.2019 BRD Original version
 // 14.07.2020 BRD Extended the rewire() functionality to work with diagnostic packages.
 // 21.07.2020 BRD Building createHarness() that inserts the required diagnostic points.
+// 04.03.2021 BRD Extending the re-wiring functionality to deal with new fault-finding 
+//                functions that capture more event information. The referencing of
+//                a diagnostic point now centers around the event it is watching, not
+//                the data input or output port that is being captured.
 //
 package fde;
 import static fde.Constants.NOT_FOUND;
@@ -42,21 +46,23 @@ public class DiagnosticAgentCapabilities {
 	// are then created that give access to inputs, outputs and events during
 	// runtime. This updates the agents belief structure about the application.
 	//
-	// fbapp            The current belief structure for the function block application.
+	// fbapp            The current system-under-diagnosis belief structure for 
+	//                  the function block application.
 	//
 	// dps              The list of the diagnostic points for this function block
 	//                  application. 
 	//
-	// applicationPath  Diagnostic packages are located in the same folder as the 
-	//                  function block type definition (.fbt) files.
+	// applicationPath  Diagnostic package (.dpg) files are located in the same folder 
+	//                  as the function block type definition (.fbt) files.
 	//
-	// server
+	// server           The non-blocking I/O server that these diagnostic points use to
+	//                  communicate with the agents.
 	//
-	// ublic boolean createHarness(FunctionBlockApp fbapp, List<DiagnosticPoint> dps, String applicationPath, NIOserver server) {
-	
 	public boolean createHarness(FunctionBlockApp fbapp, DiagnosticPoints dps, String applicationPath, NIOserver server) {
 		boolean status = true;
 		boolean foundConnection = false;
+		
+		int pollTime = 100; // polling time in milliseconds.
 		
 		FunctionBlock fb = new FunctionBlock();
 		FunctionBlockConnection fbconn = new FunctionBlockConnection();
@@ -76,12 +82,11 @@ public class DiagnosticAgentCapabilities {
 			// the designer has not kept it in-sync with changes.
 			for (int ptr = 0; ptr < fbapp.fbCount(); ptr++) {
 				fb = fbapp.getfb(ptr);
-				say(fb.Name());
-				 
+				say(fb.Name());				 
 				if (fb.Name() != "START") {
-					// Is this function block connected to anything? If not, the
-					// function block is an orphan that cannot do anything. Do not
-					// add diagnostic points.
+					// This next section determines if this function block connected to anything. If not, 
+					// the function block is an orphan that cannot do anything: do not create a diagnostic 
+					// point.
 					foundConnection = false;
 					for (int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
 						fbconn = fbapp.Connection(ptrConnection);
@@ -95,13 +100,14 @@ public class DiagnosticAgentCapabilities {
 								// A diagnostic package for this function block has been found.
 								say("Found diagnostic package for " + fb.Name() + " [" + fb.Type() + "] "+ diagPak);
 								for (int dpptr = 0; dpptr < diag.countDP(); dpptr++) {
-									say("--> " + diag.Name(dpptr));
+									say("--> |" + diag.Event(dpptr) + "|" + diag.Port(dpptr) + "|");
 									// Create the diagnostic point instance and add it into the list of
 									// diagnostic points.
 									SIFBinstanceID++;
 									DiagnosticPoint dp = new DiagnosticPoint();
 									dp.fbName = fb.Name();
-									dp.fbPortName = diag.Name(dpptr);
+									dp.fbEventName = diag.Event(dpptr);
+									dp.fbPortName = diag.Port(dpptr);
 									dp.SIFBinstanceID = SIFBinstanceID;
 									dp.fbapp = fbapp;
 									dp.server = server;	
@@ -126,7 +132,7 @@ public class DiagnosticAgentCapabilities {
 				}
 			}
 			
-			if ((dps.count() > 0) && (status == true)) {
+			if ((dps.count() > 0) && (status)) {
 				// There is at least one diagnostic point to create. This next pass rewires the application to 
 				// insert and wire-up the individual diagnostic points.
 				DiagnosticPoint dp = new DiagnosticPoint();
@@ -135,19 +141,20 @@ public class DiagnosticAgentCapabilities {
 				say("\nRewiring...");
 				for (int dpptr = 0; dpptr < dps.count(); dpptr++) {
 					dp = dps.get(dpptr);
-					dpStatus = createDP(dp, fbapp, server, errorHandler);
+					dpStatus = createDP(dp, fbapp, pollTime, server, errorHandler);
 					if (dpStatus != fbAppCodes.REWIRED) {
 						status = false;
 						say("Problem");
 					}
 				}
-				
-				if (status) {
-					if (!createForteBootfile(fbapp, applicationPath + "", errorHandler)) {
-						say("Could not create a diagnostic harness in forte.boot. " + errorHandler.Description());
-						status = false;
-					}	
-				}
+			}
+			
+			if (status) {
+				// RA_BRD note change to specify where the forte.fboot file is to be created.
+				if (!createForteBootfile(fbapp, applicationPath + "/src/", errorHandler)) {
+					say("Could not create a diagnostic harness in forte.boot. " + errorHandler.Description());
+					status = false;
+				}	
 			}
 		}
 		return status;
@@ -168,8 +175,10 @@ public class DiagnosticAgentCapabilities {
 	//          		contains details of individual function blocks, all their properties and
 	//		    		a complete list of connections.	
 	//
-	// server			The agent's TCP/IP server that will receive network messages from this 
-	//					AGENT_SEND function block.
+	// pollTime         The frequency of at which the diagnostic point polls the server in milliseconds.
+	//                  	
+	// server			The agent's TCP/IP server that will send and receive packets from the 
+	//					AGENT_GATE function block instance.
 	//
 	// errorHandler	    Used to pass errors up through the handler event chain back to the function
 	//					caller.
@@ -177,7 +186,7 @@ public class DiagnosticAgentCapabilities {
 	// returns 		 	One of the FunctionBlockAppCodes to indicate the status of the rewiring
 	//         			command.	
 	//
-	private fbAppCodes createDP(DiagnosticPoint dp, FunctionBlockApp fbapp, NIOserver server, ErrorHandler errorHandler) {
+	private fbAppCodes createDP(DiagnosticPoint dp, FunctionBlockApp fbapp, int pollTime, NIOserver server, ErrorHandler errorHandler) {
 		fbAppCodes status = fbAppCodes.UNDEFINED;
 		String eventName = "";
 		int ptrWith = 0;
@@ -201,180 +210,312 @@ public class DiagnosticAgentCapabilities {
 		FunctionBlockVariable fbVar = new FunctionBlockVariable();
 		FunctionBlockConnection fbconn = new FunctionBlockConnection();
 		
-		say("Creating diagnostic point " + "DP_"+ dp.SIFBinstanceID() + " " + dp.fbName() + " " + dp.fbPortName());
+		boolean foundConnection = false;
+		
+		say("\nCreating diagnostic point " + "DP_"+ dp.SIFBinstanceID() + " " + dp.fbName() 
+		    + " " + dp.fbEventName() + " " + dp.fbPortName() + " " + dp.fbPortName.length());
 		
 		fb = fbapp.findfb(dp.fbName());
 		if (fb.Name() != "") {
-			// Locate the input or output data port
-			ptrVar = fb.findVar(dp.fbPortName);
-			if (ptrVar != NOT_FOUND) {
-				fbVar = fb.Var(ptrVar);
-				switch (fbVar.VarType()) {
-				case VAR_INPUT:
-					// Locate the event that is used to trigger this data input.
-					ptrWith = NOT_FOUND;
-					for (ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
-						fbEvent = fb.Event(ptrEvent);
-						// Only input data types and events can be triggered.
-						if (fbEvent.EventType == EventTypes.EVENT_INPUT) {
-							ptrWith = fbEvent.findWithVar(dp.fbPortName());
-							if (ptrWith != NOT_FOUND) {
-								eventName = fbEvent.EventName;
-								break;
-							}	
-						}
-					}
-					if (ptrWith != NOT_FOUND) {
-						say("Input port " + dp.fbPortName + " " + eventName);
-						
-						fbdp.Name("DP_" + dp.SIFBinstanceID());
-						fbdp.Type("DP");
-						fbdp.Comment("Diagnostic point for " + fb.Name());
-						
-						dataType = fbVar.DataType();
-						outputPort = "DATA_OUT_" + fbVar.StringFromDataType(dataType);
-						fbdp.addParameter("DATA_TYPE", String.valueOf(dataType));
-						
-						// RA_BRD The POLL_TIME should be parameterized ... maybe in the diagnostic package?
-						fbdp.addParameter("POLL_TIME", "T#100ms");
-						fbdp.addParameter("ADDRESS", server.hostName()); 
-						fbdp.addParameter("PORT", String.valueOf(server.listenerPortNumber())); 
-						fbdp.addParameter("INST_ID", String.valueOf(dp.SIFBinstanceID()));
-						
-						// The diagnostic point is being inserted into the event and data flow. Break the
-						// previous direct connections and divert them.												
-						for(int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
-							fbconn = fbapp.Connection(ptrConnection);
-						//	say(fbconn.SourceFB() + " " + fbconn.SourceName() 
-						//					   + " ---> " + 
-						//					   fbconn.DestinationFB() + " " + fbconn.DestinationName() );
-							if (fbconn.DestinationFB().equals(fb.Name())) {
-								if (fbconn.DestinationName().equals(dp.fbPortName())) {
-								//	say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName());
-									sourceFB = fbconn.SourceFB();
-									sourceName = fbconn.SourceName();
-									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
-								} else if (fbconn.DestinationName().equals(eventName)) {
-								//	say("Found event");
-									sourceEvent = fbconn.SourceName();
-									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
-								}
+			if (dp.fbPortName.length() > 0) {
+				// Locate the data port on this function block that this diagnostic point
+				// has been assigned to monitor.
+				ptrVar = fb.findVar(dp.fbPortName);
+				if (ptrVar != NOT_FOUND) {
+					fbVar = fb.Var(ptrVar);
+					switch (fbVar.VarType()) {
+					case VAR_INPUT:
+						// Locate the event that is used to trigger this data input.
+						ptrWith = NOT_FOUND;
+						for (ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
+							fbEvent = fb.Event(ptrEvent);
+							// Only input data types and events can be triggered.
+							if (fbEvent.EventType == EventTypes.EVENT_INPUT) {
+								ptrWith = fbEvent.findWithVar(dp.fbPortName());
+								if (ptrWith != NOT_FOUND) {
+									//eventName = fbEvent.EventName;
+									break;
+								}	
 							}
 						}
-						
-						// Add the new connections between the diagnostic point and the function block.
-						fbapp.addConnection(sourceFB, sourceEvent, fbdp.Name(), "DATA_IN", true);
-						fbapp.addConnection(sourceFB, sourceName, fbdp.Name(), "DATA_IN_" + fbVar.StringFromDataType(dataType) , true);
-						
-						fbapp.addConnection("DP_" + dp.SIFBinstanceID(), "DATA_OUT", fb.Name(), eventName, true);
-						fbapp.addConnection("DP_" + dp.SIFBinstanceID(), outputPort, fb.Name(), dp.fbPortName, true);
-						
-						fbapp.addConnection("START", "COLD", "DP_" + dp.SIFBinstanceID(), "START", true);
-						fbapp.addConnection("START", "WARM", "DP_" + dp.SIFBinstanceID(), "START", true);
-
-						fbapp.add(fbdp);
-						status = fbAppCodes.REWIRED;
-					} else {
-						errorHandler.addDescription("Input port " + dp.fbPortName + " on " + dp.fbName() + " has no event assigned to trigger it.");
-						status = fbAppCodes.EVENT_UNDEFINED;
-					}
-					break;
-					
-				case VAR_OUTPUT:
-					// Locate the event that is used to trigger this data output.
-					ptrWith = NOT_FOUND;
-					for (ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
-						fbEvent = fb.Event(ptrEvent);
-						// Only output data types and events can be triggered.
-						if (fbEvent.EventType == EventTypes.EVENT_OUTPUT) {
-							ptrWith = fbEvent.findWithVar(dp.fbPortName());
-							if (ptrWith != NOT_FOUND) {
-								eventName = fbEvent.EventName;
-								break;
+						if (ptrWith != NOT_FOUND) {
+							say("Input port " + dp.fbPortName + " " + dp.fbEventName);
+							
+							fbdp.Name("DP_" + dp.SIFBinstanceID());
+							fbdp.Type("DP");
+							fbdp.Comment("Diagnostic point for " + fb.Name());
+							
+							dataType = fbVar.DataType();
+							outputPort = "DATA_OUT_" + fbVar.StringFromDataType(dataType);
+							fbdp.addParameter("DATA_TYPE", String.valueOf(dataType));
+							
+							// RA_BRD The POLL_TIME should be parameterized ... maybe in the diagnostic package?
+							fbdp.addParameter("POLL_TIME", "T#"+ pollTime + "ms");  // was "T#100ms"
+							fbdp.addParameter("ADDRESS", server.hostName()); 
+							fbdp.addParameter("PORT", String.valueOf(server.listenerPortNumber())); 
+							fbdp.addParameter("INST_ID", String.valueOf(dp.SIFBinstanceID()));
+							
+							// The diagnostic point is being inserted into the event and data flow. If there are
+							// existing connections, break them so they can be diverted through the diagnostic point.																
+							for (int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+								fbconn = fbapp.Connection(ptrConnection);
+								say(fbconn.SourceFB() + " " + fbconn.SourceName() 
+												   + " ---> " + 
+												   fbconn.DestinationFB() + " " + fbconn.DestinationName() );
+								if (fbconn.DestinationFB().equals(fb.Name())) {
+									if (fbconn.DestinationName().equals(dp.fbPortName())) {
+										say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName());
+										sourceFB = fbconn.SourceFB();
+										sourceName = fbconn.SourceName();
+										fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+									} else if (fbconn.DestinationName().equals(dp.fbEventName)) {
+										say("Found event ");
+										sourceEvent = fbconn.SourceName();
+										fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+									}
+								}
+							}
+							
+							// Add the new connections between the diagnostic point and the function block.
+							if (sourceEvent != "") {
+								fbapp.addConnection(sourceFB, sourceEvent, fbdp.Name(), "DATA_IN", true);
+							} else {
+								
+							}
+							if (sourceName != "") {
+								fbapp.addConnection(sourceFB, sourceName, fbdp.Name(), "DATA_IN_" + fbVar.StringFromDataType(dataType) , true);
 							}	
+							
+							fbapp.addConnection("DP_" + dp.SIFBinstanceID(), "DATA_OUT", fb.Name(), dp.fbEventName, true);
+							fbapp.addConnection("DP_" + dp.SIFBinstanceID(), outputPort, fb.Name(), dp.fbPortName, true);
+							
+							fbapp.addConnection("START", "COLD", "DP_" + dp.SIFBinstanceID(), "START", true);
+							fbapp.addConnection("START", "WARM", "DP_" + dp.SIFBinstanceID(), "START", true);
+		
+							fbapp.add(fbdp);
+							status = fbAppCodes.REWIRED;
+						} else {
+							errorHandler.addDescription("Input port " + dp.fbPortName + " on " + dp.fbName() + " has no event assigned to trigger it.");
+							status = fbAppCodes.EVENT_UNDEFINED;
 						}
+						break;
+						
+					case VAR_OUTPUT:
+						// Locate the event that is used to trigger this data output. This
+						// verifies that the event does exist and maps to this data port. If
+						// it does not, then the diagnostic package is probably out-of-date.
+						ptrWith = NOT_FOUND;
+						for (ptrEvent = 0; ptrEvent < fb.eventCount(); ptrEvent++) {
+							fbEvent = fb.Event(ptrEvent);
+							// Only output data types and events can be triggered.
+							if (fbEvent.EventType == EventTypes.EVENT_OUTPUT) {
+								ptrWith = fbEvent.findWithVar(dp.fbPortName());
+								if (ptrWith != NOT_FOUND) {
+									//eventName = fbEvent.EventName;
+									break;
+								}	
+							}
+						}
+						if (ptrWith != NOT_FOUND) {
+							say("Output port " + dp.fbPortName + " " + eventName);
+							fbdp.Name("DP_" + dp.SIFBinstanceID());
+							fbdp.Type("DP");
+							fbdp.Comment("Diagnostic point for " + fb.Name());
+							
+							dataType = fbVar.DataType();
+							inputPort = "DATA_IN_" + fbVar.StringFromDataType(dataType);
+							fbdp.addParameter("DATA_TYPE", String.valueOf(dataType));
+							
+							// RA_BRD The POLL_TIME should be parameterized ... maybe in the diagnostic package?
+							fbdp.addParameter("POLL_TIME", "T#" + pollTime + "ms");
+							fbdp.addParameter("ADDRESS", server.hostName()); 
+							fbdp.addParameter("PORT", String.valueOf(server.listenerPortNumber())); 
+							fbdp.addParameter("INST_ID", String.valueOf(dp.SIFBinstanceID()));	
+							
+							// The diagnostic point is being inserted into the event and data flow. Break the
+							// previous direct connections and divert them.												
+							for(int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+								fbconn = fbapp.Connection(ptrConnection);
+								say(fbconn.SourceFB() + " " + fbconn.SourceName()
+								    + " ---> " + 
+									fbconn.DestinationFB() + " " + fbconn.DestinationName());									   
+																
+								if (fbconn.SourceFB().equals(fb.Name())) {
+									if (fbconn.SourceName().equals(dp.fbPortName())) {
+										say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
+									        + fbconn.DestinationFB() + " " + fbconn.DestinationName());
+										
+										destinationFB = fbconn.DestinationFB();
+										destinationName = fbconn.DestinationName();
+										fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+									} else if (fbconn.SourceName().equals(eventName)) {
+										say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
+										        + fbconn.DestinationFB() + " " + fbconn.DestinationName());
+										destinationEvent = fbconn.DestinationName();
+										fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+									}
+								}
+							}
+							
+							if (destinationFB != "") {
+								// Add the new connections between the diagnostic point and the destination function block. There must always be an
+								// event to connect or else it will not work.
+								fbapp.addConnection(fbdp.Name(), "DATA_OUT", destinationFB, destinationEvent, true);
+								if (destinationName != "") {
+									// Connect the output data port to the destination input port. Note that there must be an event, but there is not
+									// always a source output port to route.
+									fbapp.addConnection(fbdp.Name(), "DATA_OUT_" + fbVar.StringFromDataType(dataType), destinationFB, destinationName, true);
+								}	
+							}
+							
+							// Connect the output event to the diagnostic point.
+							fbapp.addConnection(fb.Name(), dp.fbEventName, "DP_" + dp.SIFBinstanceID(), "DATA_IN", true);
+							if (dp.fbPortName != "") {
+								// There is an output data port, so connect it to the correct input port on the diagnostic point.
+								fbapp.addConnection(fb.Name(), dp.fbPortName, "DP_" + dp.SIFBinstanceID(), "DATA_IN_" + fbVar.StringFromDataType(dataType), true);
+							}
+							
+							// These connections activate and initialise the diagnostic point.
+							fbapp.addConnection("START", "COLD", "DP_" + dp.SIFBinstanceID(), "START", true);
+							fbapp.addConnection("START", "WARM", "DP_" + dp.SIFBinstanceID(), "START", true);
+		
+							fbapp.add(fbdp);
+							status = fbAppCodes.REWIRED;
+						} else {
+							errorHandler.addDescription("Output port " + dp.fbPortName + " on " + dp.fbName() + " has no event " + dp.fbEventName() + 
+									                    " assigned to trigger it. The diagnostic package information is out-of-date.");
+							status = fbAppCodes.EVENT_UNDEFINED;
+						}
+						break;
 					}
-					if (ptrWith != NOT_FOUND) {
-						say("Output port " + dp.fbPortName + " " + eventName);
+				}	
+				
+			} else {
+				// This section caters for DPs that are triggering or monitoring events with no associated
+				// data input or data output ports. 
+				ptrEvent = fb.findEvent(dp.fbEventName);
+				if (ptrEvent != NOT_FOUND) {
+					// The diagnostic package specified the event, but the previous step confirmed
+					// that the package information is not out-of-date; an event matching the name
+					// was found in the function block event list.
+					fbEvent = fb.Event(ptrEvent);
+					eventName = fbEvent.EventName;
+					
+					switch (fbEvent.EventType()) {
+					case EVENT_INPUT:
+						say(fbEvent.EventType() + " Input port " + dp.fbEventName() + " " + dp.fbPortName());							
 						fbdp.Name("DP_" + dp.SIFBinstanceID());
 						fbdp.Type("DP");
-						fbdp.Comment("Diagnostic point for " + fb.Name());
-						
-						dataType = fbVar.DataType();
-						inputPort = "DATA_IN_" + fbVar.StringFromDataType(dataType);
+						dataType = DataTypes.DATATYPE_EVENT;
 						fbdp.addParameter("DATA_TYPE", String.valueOf(dataType));
-						
 						// RA_BRD The POLL_TIME should be parameterized ... maybe in the diagnostic package?
-						fbdp.addParameter("POLL_TIME", "T#100ms");
+						fbdp.addParameter("POLL_TIME", "T#"+ pollTime + "ms");
 						fbdp.addParameter("ADDRESS", server.hostName()); 
 						fbdp.addParameter("PORT", String.valueOf(server.listenerPortNumber())); 
 						fbdp.addParameter("INST_ID", String.valueOf(dp.SIFBinstanceID()));	
 						
-						// The diagnostic point is being inserted into the event and data flow. Break the
-						// previous direct connections and divert them.												
-						for(int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+						// The diagnostic point is being inserted into the input event. Break the
+						// previous direct connections if they exist and divert them.
+						foundConnection = false;
+						for (int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
 							fbconn = fbapp.Connection(ptrConnection);
 							say(fbconn.SourceFB() + " " + fbconn.SourceName()
 							    + " ---> " + 
 								fbconn.DestinationFB() + " " + fbconn.DestinationName());									   
-							
-							// F_TO_C_CONV_1 CNF ---> Z_CONTROLLER TEMP_CHANGED
-							
-							if (fbconn.SourceFB().equals(fb.Name())) {
-								if (fbconn.SourceName().equals(dp.fbPortName())) {
-									say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
-								        + fbconn.DestinationFB() + " " + fbconn.DestinationName());
-									
+							if (fbconn.DestinationFB().equals(fb.Name())) {
+								if (fbconn.DestinationName().equals(dp.fbEventName())) {    
+									foundConnection = true;
+									say("Found connection to from " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
+									    + fbconn.DestinationFB() + " " + fbconn.DestinationName());
+									sourceFB = fbconn.SourceFB();
+									sourceName = fbconn.SourceName();
 									destinationFB = fbconn.DestinationFB();
 									destinationName = fbconn.DestinationName();
-									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+									// Break the original connection.
+									fbapp.updateConnection(fbconn, sourceFB, sourceName, destinationFB, destinationName, false); 
 								} else if (fbconn.SourceName().equals(eventName)) {
 									say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
-									        + fbconn.DestinationFB() + " " + fbconn.DestinationName());
+									    + fbconn.DestinationFB() + " " + fbconn.DestinationName());
 									destinationEvent = fbconn.DestinationName();
 									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
 								}
 							}
 						}
 						
-						// Add the new connections between the diagnostic point and the function block.
-						fbapp.addConnection(fbdp.Name(), "DATA_OUT", destinationFB, destinationEvent, true);
-						fbapp.addConnection(fbdp.Name(), "DATA_OUT_" + fbVar.StringFromDataType(dataType), destinationFB, destinationName, true);
+						// Add the new event-only connections between the diagnostic point and the function block.
+						fbapp.addConnection("DP_" + dp.SIFBinstanceID(), "DATA_OUT", fb.Name(), eventName,  true);
+						if (foundConnection) {
+							// There is an incoming event connection from another function block to this diagnostic point.
+							fbapp.addConnection(sourceFB, sourceName, fbdp.Name(), "DATA_IN", true);
+						}
 						
+						fbapp.addConnection("START", "COLD", "DP_" + dp.SIFBinstanceID(), "START", true);
+						fbapp.addConnection("START", "WARM", "DP_" + dp.SIFBinstanceID(), "START", true);
+
+						fbapp.add(fbdp);
+						status = fbAppCodes.REWIRED;						
+						break;
+						
+					case EVENT_OUTPUT:
+						say(fbEvent.EventType() + " Output port " + dp.fbPortName + " " + eventName);							
+						fbdp.Name("DP_" + dp.SIFBinstanceID());
+						fbdp.Type("DP");
+						fbdp.Comment("Diagnostic point for " + fb.Name());
+						
+						dataType = DataTypes.DATATYPE_EVENT;
+						// inputPort = "DATA_IN_" + fbVar.StringFromDataType(dataType); RA_BRD
+						fbdp.addParameter("DATA_TYPE", String.valueOf(dataType));
+						
+						// RA_BRD The POLL_TIME should be parameterized ... maybe in the diagnostic package?
+						fbdp.addParameter("POLL_TIME", "T#"+ pollTime + "ms");
+						fbdp.addParameter("ADDRESS", server.hostName()); 
+						fbdp.addParameter("PORT", String.valueOf(server.listenerPortNumber())); 
+						fbdp.addParameter("INST_ID", String.valueOf(dp.SIFBinstanceID()));	
+						
+						// The diagnostic point is being inserted only into the output event. Break the
+						// previous direct connections if they exist and divert them.	
+						foundConnection = false;
+						for(int ptrConnection = 0; ptrConnection < fbapp.ConnectionCount(); ptrConnection++) {
+							fbconn = fbapp.Connection(ptrConnection);
+							say(fbconn.SourceFB() + " " + fbconn.SourceName()
+							    + " ---> " + 
+								fbconn.DestinationFB() + " " + fbconn.DestinationName());									   
+							if (fbconn.SourceFB().equals(fb.Name())) {
+								if (fbconn.SourceName().equals(dp.fbPortName())) {
+									foundConnection = true;
+									say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
+								        + fbconn.DestinationFB() + " " + fbconn.DestinationName());									
+									destinationFB = fbconn.DestinationFB();
+									destinationName = fbconn.DestinationName();
+									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+								} else if (fbconn.SourceName().equals(eventName)) {
+									say("Found connection to " + fbconn.SourceFB() + " " + fbconn.SourceName() + " --> " 
+									    + fbconn.DestinationFB() + " " + fbconn.DestinationName());
+									destinationEvent = fbconn.DestinationName();
+									fbapp.updateConnection(fbconn, fbconn.SourceFB(), fbconn.SourceName(), fbconn.DestinationFB(), fbconn.DestinationName(), false); 
+								}
+							}
+						}
+
+						// Add the new event-only connections between the diagnostic point and the function block.
 						fbapp.addConnection(fb.Name(), eventName, "DP_" + dp.SIFBinstanceID(), "DATA_IN", true);
-						fbapp.addConnection(fb.Name(), dp.fbPortName, "DP_" + dp.SIFBinstanceID(), "DATA_IN_" + fbVar.StringFromDataType(dataType), true);
+						if (foundConnection) {
+							// There is an outgoing event connection from the diagnostic point to another function block.
+							fbapp.addConnection(fbdp.Name(), "DATA_OUT", destinationFB, destinationName, true);
+						}
 						
 						fbapp.addConnection("START", "COLD", "DP_" + dp.SIFBinstanceID(), "START", true);
 						fbapp.addConnection("START", "WARM", "DP_" + dp.SIFBinstanceID(), "START", true);
 
 						fbapp.add(fbdp);
 						status = fbAppCodes.REWIRED;
-					} else {
-						errorHandler.addDescription("Output port " + dp.fbPortName + " on " + dp.fbName() + " has no event assigned to trigger it.");
-						status = fbAppCodes.EVENT_UNDEFINED;
+						break;
 					}
-					break;
-				}
 				
-			} else {
-				// This is where we cater for DPs that are triggering or monitoring events, not data inputs
-				// or data outputs. 
-				ptrEvent = fb.findEvent(dp.fbPortName);
-				if (ptrEvent != NOT_FOUND) {
-					fbEvent = fb.Event(ptrEvent);
-					switch (fbEvent.EventType()) {
-					case EVENT_INPUT:
-						
-						break;
-						
-					case EVENT_OUTPUT:
-						
-						break;
-					}
-					
-					
-					
 				} else {
+					// The diagnostic package specified the event, but the event name could not be 
+					// found in the function block definition. That suggests that the diagnostic package
+					// information is out-of-date.
 					status = fbAppCodes.INVALID_EVENT_NAME;
 				}
 			}

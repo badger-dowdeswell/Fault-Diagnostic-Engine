@@ -5,7 +5,7 @@
 // connections. This allows the SIFB AGENT_GATE instances to connect to the 
 // Fault Diagnostic Engine system as clients.
 //
-// (c) AUT University - 2019-2020
+// (c) AUT University - 2019-2021
 //
 // Documentation
 // =============
@@ -15,7 +15,7 @@
 // documents.
 //
 // This version was customised for use with the Fault Diagnostic Engine. A
-// similiar version is used in symbIoTe to manage interactions between 
+// similar version is used in symbIoTe to manage interactions between 
 // function block applications and the simulated Human Machine Interface
 // (HMI).
 //
@@ -37,6 +37,9 @@
 //                disconnects while the server has replies queued to post-back.
 // 11.08.2020 BRD Added cntConnections() method to return the number of connections
 //                that are currently open.
+// 20.02.2021 BRD Added timestamp to the packet structure.
+// 18.03.2021 BRD Corrected error in unpackPacket() method that was not handling
+//                multiple packets in a single read.
 //
 package fde;
 
@@ -44,8 +47,9 @@ import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.*;
 import java.util.*;
-
+import fde.DiagnosticAgent.AgentModes;
 import fde.ExitCodes;
+
 
 public class NIOserver implements Runnable {
 	//
@@ -57,7 +61,7 @@ public class NIOserver implements Runnable {
 	// instances the server will support. Each session manages its own
 	// simultaneous asynchronous in and out queues FIFO queues.
 	// RA_BRD - could we make this dynamic?
-	final int MAX_CLIENTS = 25;
+	final int MAX_CLIENTS = 50;
 	private int cntConnections = 0;
 	private boolean isSilent = false;
 	private boolean unitTesting = false;
@@ -105,7 +109,7 @@ public class NIOserver implements Runnable {
 	// This returns an integer status code from ExitCodes.
 	//
 	public void run() {
-		say("Server started" + "\n"); 
+		say("NIOserver process started" + "\n"); 
 		try {
 			startServer(hostName, listenerPortNumber);
 		} catch (Exception e) {
@@ -130,6 +134,7 @@ public class NIOserver implements Runnable {
 		int packetLength = 0;
 		int SIFBinstanceID = 0;
 		NIOserverPacket packet = new NIOserverPacket();
+		boolean haveBuffer = false;
 		
 		// Initialise the queues
 		for (int ptrQueue = 0; ptrQueue < MAX_CLIENTS; ptrQueue++) {
@@ -219,14 +224,43 @@ public class NIOserver implements Runnable {
 										cntConnections = 0;
 									}
 								} else {
-									SIFBinstanceID = queuePacket(dataPacket);
-								}	
-						
+									// Refactored 18.02.2021
+									
+									do {
+										haveBuffer = false;
+										NIOserverPacket newPacket = unpackPacket(dataPacket);
+										//say("--> Received " + newPacket.command() + " " + dataPacket);
+									//	if (Integer.parseInt(newPacket.command()) == AgentModes.TIMESTAMP) {
+									//		say("Timestamp packet " + newPacket.timeStamp());
+									//	}
+										SIFBinstanceID = newPacket.SIFBinstanceID();
+										if (Integer.parseInt(newPacket.command()) != AgentModes.POLL_AGENT) {
+											//say("Queueing packet\n");
+											//if (newPacket.SIFBinstanceID() > 0) {
+											//say("packet command [" + newPacket.command() + "\n");
+											//say("timestamp received " + newPacket.timeStamp + "\n");
+											inFIFOqueue[newPacket.SIFBinstanceID()].add(newPacket);
+										//}	
+										}
+										if (newPacket.buffer.length() > 0) {
+											haveBuffer = true;
+											dataPacket = newPacket.buffer();
+										}
+										
+										// RA_BRD handle the buffer if there is data remaining. Put this section 
+										// in a loop to process the buffer until there is nothing left from this
+										// read.
+										// Original code refactored in 18.02.2021 to stop POLL packets getting queued needlessly.
+										// SIFBinstanceID = queuePacket(dataPacket);
+									} while (haveBuffer);
+								}
+								
 								// Is there data to send to this client?
 								if (SIFBinstanceID > 0) {
 									if (outQueueSize(SIFBinstanceID) > 0) {
 										if (key.isWritable()) {
 											packet = getQueuedPacket(SIFBinstanceID);
+											//say("Sending [" + packet + "] to " + SIFBinstanceID);
 											ByteBuffer byteBuffer2 = ByteBuffer.wrap(packet.dataValue().getBytes());
 											sc.write(byteBuffer2);
 											byteBuffer2.clear();
@@ -254,31 +288,34 @@ public class NIOserver implements Runnable {
 	// ================
 	// Example packet containing two data message packets together:
 	//
-	//   *2|1|9|57.002834|&*1|2|6|-34.45
+	//   *2|1|1613778713957|9|57.002834|&*1|2|1613778714041|6|-34.457&
 	//
-	// 	 Start of packet character - currently character *
+	// 	 Start of packet character - currently character "*".
 	//	 Command string. Identifies the purpose of the data packet. Always one of the AgentModes.
-	//   Field separator - currently "|"
+	//   Field separator - currently "|".
 	// 	 SIFB instance ID - Integer.
-	// 	 Field separator 
-	//   Data field length - Integer
-	//   Field separator 
-	//   Data field - string
-	//   End of packet marker - currently "&"
+	// 	 Field separator. 
+	//   TimeStamp - time stamp for the data that represents the Linux epoch time in milliseconds.
+	//	 Field separator. 
+	//   Data field length - Integer.
+	//   Field separator. 
+	//   Data field - string.
+	//   End of packet marker - currently "&".
 	//
 	// Further information and examples of the packet structures is available in the document
 	// "Non-Blocking IO server design documentation" located with the other Fault Diagnostic 
 	// Engine Software Architecture documents.
 	// 
 	private int queuePacket(String dataPacket) {
-		int SIFBinstanceID = 0;
 		int ptrStart = 0;
 		int ptrEnd = 0;
+		String packet = "";
 		
 		String command = "";
+		int SIFBinstanceID = 0;
+		long timeStamp = 0;
 		int fieldLen = 0;
 		String dataValue = "";
-		String packet = "";
 		
 		while (dataPacket.length() > 0) {
 			ptrStart = dataPacket.indexOf(MESSAGE_START, 0);
@@ -310,18 +347,30 @@ public class NIOserver implements Runnable {
 					} catch (NumberFormatException nfe) {
 						SIFBinstanceID = 0;
 					}	
-													
-					ptrStart = ptrEnd + 1;
-					ptrEnd = packet.indexOf(FIELD_SEPARATOR, ptrStart);
-					if (ptrEnd > 0) {
-						try {
-							fieldLen = Integer.valueOf(packet.substring(ptrStart, ptrEnd));
-							if (fieldLen > 0) {
-								ptrStart = packet.indexOf(FIELD_SEPARATOR, ptrEnd) + 1;
-								dataValue = packet.substring(ptrStart, ptrStart + fieldLen);
+					
+					if(ptrEnd > 0) {
+						ptrStart = ptrEnd + 1;
+						ptrEnd = packet.indexOf(FIELD_SEPARATOR, ptrStart);
+						if (ptrEnd > 0) {
+							try {
+								timeStamp = Long.valueOf(packet.substring(ptrStart, ptrEnd));
+							} catch (NumberFormatException nfe) {
+								timeStamp = 0;
+							}	
+												
+							ptrStart = ptrEnd + 1;
+							ptrEnd = packet.indexOf(FIELD_SEPARATOR, ptrStart);
+							if (ptrEnd > 0) {
+								try {
+									fieldLen = Integer.valueOf(packet.substring(ptrStart, ptrEnd));
+									if (fieldLen > 0) {
+										ptrStart = packet.indexOf(FIELD_SEPARATOR, ptrEnd) + 1;
+										dataValue = packet.substring(ptrStart, ptrStart + fieldLen);
+									}
+								} catch (NumberFormatException nfe) {
+								}
 							}
-						} catch (NumberFormatException nfe) {
-						}
+						}	
 					}
 				}
 				
@@ -329,6 +378,7 @@ public class NIOserver implements Runnable {
 					NIOserverPacket newPacket = new NIOserverPacket();
 					newPacket.command(command);
 					newPacket.SIFBinstanceID(SIFBinstanceID);
+					newPacket.timeStamp(timeStamp);
 					newPacket.dataValue(dataValue);
 					// Packet queue entries are indexed on the instance ID
 					// of the function block agent.
@@ -338,11 +388,134 @@ public class NIOserver implements Runnable {
 		}
 		return SIFBinstanceID;
 	}	
+	
+	//
+	// unpackPacket()
+	// ==============
+	// Unpacks the fields in a data packet into a structured NIOserverPacket() 
+	// so it can be analysed before deciding to queue it. This allows
+	// synchronising commands to be identified that should not be placed
+	// in the FIFO queues automatically.
+	//
+	// Packet structure
+	// ================
+	// Example packet containing two data message packets together:
+	//
+	//   *2|1|1613778713957|9|57.002834|&*1|2|1613778714041|6|-34.457&
+	//
+	// 	 Start of packet character - currently character "*".
+	//	 Command string. Identifies the purpose of the data packet. Always one of the AgentModes.
+	//   Field separator - currently "|".
+	// 	 SIFB instance ID - Integer.
+	// 	 Field separator. 
+	//   TimeStamp - time stamp for the data that represents the Linux epoch time in milliseconds.
+	//	 Field separator. 
+	//   Data field length - Integer.
+	//   Field separator. 
+	//   Data field - string.
+	//   End of packet marker - currently "&".
+	//
+	// Further information and examples of the packet structures is available in the document
+	// "Non-Blocking IO server design documentation" located with the other Fault Diagnostic 
+	// Engine Software Architecture documents.
+	// 
+	private NIOserverPacket unpackPacket(String dataPacket) {
+		NIOserverPacket newPacket = new NIOserverPacket();
+		int ptrStart = 0;
+		int ptrEnd = 0;
+		String packet = "";
+		String buffer = "";
+		
+		String command = "";
+		int SIFBinstanceID = 0;
+		long timeStamp = 0;
+		int fieldLen = 0;
+		String dataValue = "";
+		
+		while (dataPacket.length() > 0) {
+			ptrStart = dataPacket.indexOf(MESSAGE_START, 0);
+			if (ptrStart == -1) {
+				break;
+			}
+			
+			ptrEnd = dataPacket.indexOf(END_OF_PACKET, 0);
+			if (ptrEnd == -1) {
+				break;
+			}
+			
+			if (ptrStart > ptrEnd) {
+				say("Fault [" + dataPacket + "]");
+			}
+			
+			// There is at least one potential packet in the 
+			// current buffer. Extract the packet and save the
+			// rest of the buffer to be processed recursively.
+			packet = dataPacket.substring(ptrStart, ptrEnd);
+			buffer = dataPacket.substring(ptrEnd + 1);
+			command = "";
+			dataValue = "";		
+		
+			ptrEnd = packet.indexOf(FIELD_SEPARATOR, 1);
+			if (ptrEnd > 0) {
+				command = packet.substring(1, ptrEnd);
+				if (command.length() < 1) {
+					// Invalid command.
+					break;
+				} else {
+					ptrStart = ptrEnd + 1;
+					ptrEnd = packet.indexOf(FIELD_SEPARATOR, ptrStart);
+					if (ptrEnd > 0) {
+						try {
+							SIFBinstanceID = Integer.valueOf(packet.substring(ptrStart, ptrEnd));
+						} catch (NumberFormatException nfe) {
+							SIFBinstanceID = 0;
+						}	
+					
+						if (ptrEnd > 0) {
+							ptrStart = ptrEnd + 1;
+							ptrEnd = packet.indexOf(FIELD_SEPARATOR, ptrStart);
+							if (ptrEnd > 0) {
+								try {
+									timeStamp = Long.valueOf(packet.substring(ptrStart, ptrEnd));
+								} catch (NumberFormatException nfe) {
+									timeStamp = 0;
+								}	
+													
+								ptrStart = ptrEnd + 1;
+								ptrEnd = packet.indexOf(FIELD_SEPARATOR, ptrStart);
+								if (ptrEnd > 0) {
+									try {
+										fieldLen = Integer.valueOf(packet.substring(ptrStart, ptrEnd));
+										if (fieldLen > 0) {
+											ptrStart = packet.indexOf(FIELD_SEPARATOR, ptrEnd) + 1;
+											dataValue = packet.substring(ptrStart, ptrStart + fieldLen);
+										}
+									} catch (NumberFormatException nfe) {
+										// There is no data value in this packet.
+									}
+								}
+							}
+						}	
+					}
+					// This should be the end of a complete packet.
+					break;
+				}
+			}	
+		}
+	
+		newPacket.command(command);
+		newPacket.SIFBinstanceID(SIFBinstanceID);
+		newPacket.timeStamp(timeStamp);
+		newPacket.dataValue(dataValue);
+		newPacket.buffer(buffer);
+		return newPacket;
+	}	
 			
 	//
 	// queueUnitTest()
 	// ===============
-	// Unit test that exercises the queuePacket() method with representative test packets.
+	// Unit test that exercises the queuePacket() unpackPacket() methods with 
+	// representative test packets.
 	// 
 	// Activate this in the class definition section by setting unitTesting = true;
 	// Note that the server instance terminates at the end of the unit tests.
@@ -351,9 +524,13 @@ public class NIOserver implements Runnable {
 		System.out.println("Unit Test: packet queue methods");
 		String testPacket = "";
 		
-		testPacket = "+++*4|1|7|47.5998|&+++*4|2|15|123456789012.96|&+++*2|2|&__&";
+		testPacket = "*7|1|1616012083692|&*5|1|1616012083715|&";
 		
-		queuePacket(testPacket);
+	//	testPacket = "+++*4|1|7|47.5998|&+++*4|2|15|123456789012.96|&+++*2|2|&__&";
+		
+	//	queuePacket(testPacket);
+		
+		NIOserverPacket newPacket = unpackPacket(testPacket);
 		
 		NIOserverPacket rpacket = new NIOserverPacket();
 		for (int ptrQueue = 1; ptrQueue < MAX_CLIENTS; ptrQueue++) {

@@ -115,29 +115,29 @@ public class Beliefs {
 			System.out.printf("%-15s type:", belief.Name());
 			switch (belief.BeliefType()) {
 			case BeliefTypes.UNDEFINED:
-				System.out.print("Undefined  ");
+				System.out.print("Undefined ");
 				break;
 				
 			case BeliefTypes.INTERACTION:	
 				System.out.print("Interaction");
 		
 			case BeliefTypes.SYSTEM_UNDER_DIAGNOSIS:
-				System.out.print("SuD        ");
+				System.out.print("SuD     ");
 				break;			
 			
 			case BeliefTypes.DYNAMIC:
-				System.out.print("Dynamic    ");
+				System.out.print("Dynamic ");
 				break;
 			}
 			System.out.print(" veracity: ");
 			
 			switch (belief.Veracity()) {
 			case VeracityTypes.TRUE:
-				System.out.print("true         ");
+				System.out.print("true  ");
 				break;			
 				
 			case VeracityTypes.FALSE:
-				System.out.print("false        ");
+				System.out.print("false ");
 				break;			
 				
 			case VeracityTypes.UNDETERMINED:

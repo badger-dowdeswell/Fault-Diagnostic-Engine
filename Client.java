@@ -1,11 +1,12 @@
 //
-// NETWORK CLIENT
-// ==============
+// NON-BLOCKING NETWORK CLIENT
+// ===========================
 // Implements a non-blocking TCP client that can establish a connection
 // to an SIFB listener that is operating within the function block
-// application.
+// application. This class is generic-enough to be used with other
+// servers such as simbIoTe.
 //
-// (c) AUT University - 2019-2020
+// (c) AUT University - 2019-2021
 //
 // Documentation
 // =============
@@ -26,8 +27,6 @@ import java.io.*;
 import java.net.*;
 import java.nio.ByteBuffer;
 import java.nio.channels.SocketChannel;
-import java.util.Iterator;
-
 import fde.ExitCodes;
 
 public class Client {
@@ -88,7 +87,6 @@ public class Client {
 	// sendPacket()
 	// ============
 	public void sendPacket(String packet) { 
-
 		packet = packet + "  ";
 		try {
 			if (socket.isConnected()) {

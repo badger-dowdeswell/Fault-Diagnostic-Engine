@@ -3,12 +3,12 @@
 // =========================
 // Parses and loads Diagnostic Resources Packages for function blocks. 
 //
-// (c) AUT University - 2020
+// (c) AUT University - 2020-2021
 //
 // Documentation
 // =============
 // Designers can create diagnostic resources for each function block. These are stored in XML-format files with the same
-// name as the function block definition .fbt file but with the extension .drp (short for Diagnostic Resource Package).
+// name as the function block definition .fbt file but with the extension .dpg (short for Diagnostic Package).
 //
 // Full documentation for this class is contained in the ... <RA_BRD
 //
@@ -16,7 +16,8 @@
 //
 // Revision History
 // ================
-// 10.07.2020 BRD Original version
+// 10.07.2020 BRD Original version.
+// 25.05.2021 BRD Revised the XML structure of the diagnostic package to introduce separate Event and Port attributes.
 //
 package fde;
 
@@ -34,6 +35,8 @@ public class Diagnostics {
 	ArrayList<String> dps = new ArrayList<String>();  // Holds a list of the named diagnostic points found for this function 
 							                          // block definition.
 	private ErrorHandler errorHandler = new ErrorHandler();
+	
+	final static String FIELD_SEPARATOR = "|";
 	
 	//
 	// loadDiagnostics()
@@ -71,14 +74,13 @@ public class Diagnostics {
 			        javax.xml.parsers.SAXParser parser = parserFactory.newSAXParser();
 			        SAXdpgParser handler = new SAXdpgParser(dps, errorHandler);
 			                
-			        // Pass the diagnostic package file handle to the SAX parser and
+			        // Supply the diagnostic package file handle to the SAX parser and
 			        // start it parsing. It will call its handler functions to give us access 
 			        // to the data each time it has unpacked an element, returning back here
 			        // when it finishes.
 			        parser.parse(fbdiag, handler);
 			        
 			        if (errorHandler.Description() != "") {
-			        	//System.out.println(errorHandler.Description());
 			        	loadStatus = XMLErrorCodes.UNEXPECTED_ERROR;
 			        } else {
 			        	loadStatus = XMLErrorCodes.LOADED;
@@ -103,11 +105,34 @@ public class Diagnostics {
 	}
 	
 	//
-	// get Name()
+	// get Event()
+	// ===========
+	public String Event(int ptrDP) {
+		if (ptrDP < dps.size()) {
+			String param = (String) dps.get(ptrDP);
+			String event = "";
+			int ptr = param.indexOf(FIELD_SEPARATOR, 0);
+			if (ptr > 0) {
+				event = param.substring(0, ptr);
+			}
+			return event;
+		} else {
+			return "";
+		}	
+	}
+	
+	//
+	// get Port()
 	// ==========
-	public String Name(int ptrDP) {
-		if (ptrDP < dps.size()) {			
-			return (String) dps.get(ptrDP);
+	public String Port(int ptrDP) {
+		if (ptrDP < dps.size()) {
+			String param = (String) dps.get(ptrDP);
+			String event = "";
+			int ptr = param.indexOf(FIELD_SEPARATOR, 0);
+			if (ptr > 0) {
+				event = param.substring(ptr + 1);
+			}
+			return event;
 		} else {
 			return "";
 		}	
@@ -145,7 +170,10 @@ class SAXdpgParser extends DefaultHandler {
 	String nodeName = "";
 	String parentNode = "";	
 	String currentNode = "";
+	String currentTag = "";
 	public final int NOT_FOUND = -1;
+	
+	final static String FIELD_SEPARATOR = "|";
 	
 	List<String> dps;
 	
@@ -172,7 +200,9 @@ class SAXdpgParser extends DefaultHandler {
 
 		String packageName = "";
 		String comment = "";
-		String name = "";
+		//String name = "";
+		String port = "";
+		String event = "";
 	
 		switch (qName) {
 		case "FBDiag":
@@ -189,16 +219,41 @@ class SAXdpgParser extends DefaultHandler {
 			
 		case "DP":			
 			if (currentNode == "DPS") {
-				// An individual diagnostic point.
-				name = attributes.getValue("Name");
-				if (name != "") {
-					dps.add(name);
+				// An individual diagnostic point. Note that
+				// the getValue() method returns a null for an 
+				// empty value. That is not the same as a zero-
+				// length string "". The tests ensure that this
+				// code returns an empty string correctly.
+				event = attributes.getValue("Event");
+				if (event == null || event.length() == 0) {
+					event = "";
+				}
+				port = attributes.getValue("Port");
+				if (port == null || port.length() == 0) {
+					port = "";
+				}
+				System.out.println("DP " + event + " " + port);
+				if (event != "") {
+					dps.add(event + FIELD_SEPARATOR + port);
 				}
 			}
 			break;
+			
+		case "Diag":
+			currentNode = qName;
+			break;
+			
+		case "Name":
+			if (currentNode == "DiagTest") {
+				// This is the start of a new diagnostic function
+				currentTag = qName;
+				System.out.println(attributes.getValue(0));
+			}
+			
+		case "DiagTest":
+			currentNode = qName;
+			break;
 		}
-		
-		//System.out.println("startElement: " + localName + " " + qName + " currentNode = " + currentNode);
 	}
 		
 	//
@@ -206,13 +261,14 @@ class SAXdpgParser extends DefaultHandler {
 	// ============
 	@Override
 	public void endElement(String uri, String localName, String qName) throws SAXException {
-		//System.out.println("endElement: " + qName);
-		
 		switch (qName) {
 		case "FBDiag":
 		case "DPS":
+		case "Diag":
+		case "DiagTest":	
 			// End of the current node.
 			currentNode = "";
+			currentTag = "";
 			break;
 		}
 	}	
@@ -222,7 +278,17 @@ class SAXdpgParser extends DefaultHandler {
 	// ============
 	@Override
 	public void characters(char[] ch, int start, int length) throws SAXException {
-      // System.out.println("characters: " + String.copyValueOf(ch, start, length).trim());
+		String value = new String(ch, start, length).trim();
+		
+		switch (currentNode) {
+		case "DiagTest":
+			switch (currentTag) {
+			case "Name":
+				System.out.println("[" + value + "]");
+				break;
+			}
+			break;
+		}
 	}	
 }
 

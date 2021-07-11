@@ -279,12 +279,21 @@ public class FunctionBlockApp {
 	// ===============
 	public void addConnection(String SourceFB, String SourceName, String DestinationFB, String DestinationName, boolean Enabled) {
 		FunctionBlockConnection fbConnection = new FunctionBlockConnection();
-		fbConnection.SourceFB(SourceFB);
-		fbConnection.SourceName(SourceName);
-		fbConnection.DestinationFB(DestinationFB);
-		fbConnection.DestinationName(DestinationName);
-		fbConnection.Enabled(Enabled);
-		fbc.add(fbConnection);
+		if (!(SourceFB.equals("") || SourceName.equals(""))) {
+			fbConnection.SourceFB(SourceFB);
+			fbConnection.SourceName(SourceName);
+			
+			if (!(DestinationFB.equals("") || DestinationName.equals(""))) {
+				fbConnection.DestinationFB(DestinationFB);
+				fbConnection.DestinationName(DestinationName);
+				fbConnection.Enabled(Enabled);
+				fbc.add(fbConnection);
+			} else {
+				System.out.println("");	
+			}
+		} else {
+			System.out.println("");
+		}
 	}
 	
 	//
