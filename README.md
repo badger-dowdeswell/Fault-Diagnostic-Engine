@@ -1,5 +1,4 @@
-# fde
-Fault Diagnosis Engine
+# The Fault Diagnosis Engine
 
 This Fault Diagnostic Engine implements agent-based fault diagnostics. It creates agents, hosted and supported within the GORITE Multi-Agent System framework. Refer to the documentation in the Fault Diagnosis System Software Architecture Document for a deeper explanation of how the  agents are constructed.
  
