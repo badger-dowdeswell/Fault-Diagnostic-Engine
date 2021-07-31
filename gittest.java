@@ -4,6 +4,7 @@ line
 line
 line
 another line
+new line from linux
 
 
 <end>
